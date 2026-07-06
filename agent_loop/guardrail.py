@@ -162,7 +162,10 @@ def evaluate(
     cand = _load(candidate)
     hold = _load(holdout)
     trace_d = _load(trace)
-    sota_sel = _load(sota) or _sota_from_trace(trace_d)
+    # Two SOTA references from different places: the incumbent's *selection* metrics come from a
+    # run JSON (--sota), while its *holdout* metrics live on the accepted trace trial.
+    sota_trial = _sota_from_trace(trace_d)
+    sota_sel = _load(sota) or sota_trial
 
     stats = sharpe_stats(daily_excess_returns(cand["workspace"], with_cost=True))
     n_trials = (len(trace_d["trials"]) + 1) if (trace_d and trace_d.get("trials")) else 1
@@ -203,8 +206,11 @@ def evaluate(
     else:
         cand_h = float(hold["metrics"].get(holdout_metric))
         sota_h = None
-        if sota_sel and sota_sel.get("holdout_metrics"):
-            sota_h = sota_sel["holdout_metrics"].get(holdout_metric)
+        for src in (sota_trial, sota_sel):  # prefer the accepted trial's recorded holdout metrics
+            if isinstance(src, dict) and src.get("holdout_metrics"):
+                sota_h = src["holdout_metrics"].get(holdout_metric)
+                if sota_h is not None:
+                    break
         bar = sota_h if sota_h is not None else min_holdout
         holdout_ok = cand_h > bar
         reasons.append(

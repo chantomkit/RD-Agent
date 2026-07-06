@@ -88,6 +88,21 @@ def test_dsr_haircut_rejects_after_many_trials(tmp_path: Path):
     assert low["dsr"]["value"] > 0.95 > high["dsr"]["value"]
 
 
+def test_holdout_compared_against_sota_trial_not_floor(tmp_path: Path):
+    """Regression (surfaced by a real Phase-D run): when --sota is a bare run JSON with no holdout
+    metrics, the holdout gate must still compare against the SOTA *trial's* recorded holdout metric
+    from the trace — not silently fall back to the floor. Candidate improves on selection but is
+    below the incumbent on the locked holdout, so it must be rejected on the holdout gate."""
+    cand = _make_run(tmp_path, "cand", sr_ann=2.6)                          # strong enough to clear DSR
+    hold = _make_run(tmp_path, "hold", sr_ann=0.0, holdout_rank_ic=0.0232)  # below SOTA holdout
+    sota = _make_run(tmp_path, "sota", sr_ann=1.0)                          # bare run JSON, no holdout
+    trace = _make_trace(tmp_path, n_noise=0, sr_std=0.02, accepted_holdout_rank_ic=0.0244)
+    res = guardrail.evaluate(candidate=cand, holdout=hold, sota=sota, trace=trace)
+    assert res["gates"]["dsr_ok"] and res["gates"]["net_positive"] and res["gates"]["beats_sota_net"]
+    assert res["gates"]["holdout_ok"] is False  # the only failing gate
+    assert res["decision"] is False
+
+
 def test_missing_holdout_cannot_promote(tmp_path: Path):
     cand = _make_run(tmp_path, "cand", sr_ann=2.2)
     res = guardrail.evaluate(candidate=cand)  # no holdout

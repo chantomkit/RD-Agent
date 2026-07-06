@@ -152,6 +152,37 @@ is promoted at `N=1` (DSR 0.98) is rejected after 200 trials (DSR 0.35) — the 
 biting exactly as designed. The trace JSON schema the guardrail reads is the contract for the Phase C
 `trace` tool.
 
+## 5c. Phase D — the full arc on a real factor (done)
+
+An agent-authored factor set (5-day return / 5d-20d volume ratio / 10-day amplitude) was added to the
+Alpha20 base and driven end-to-end via the expression route (`run_qlib --features`), on a **selection**
+segment (2018) and a **locked holdout** (2019), then judged. Result:
+
+| run | Rank IC | net IR |
+|---|---|---|
+| baseline  selection (2018) | 0.0283 | −0.245 |
+| baseline  holdout (2019)   | 0.0244 | +0.286 |
+| candidate selection (2018) | **0.0387** | −0.563 |
+| candidate holdout (2019)   | 0.0232 | +1.451 |
+
+**Decision: REJECT — and it is exactly the failure mode the loop exists to catch.** The factor *raised*
+Rank IC on the selection segment (0.028 → 0.039), the classic in-sample lure a metric-eyeballing judge
+would promote on; but on the locked 2019 holdout it did **not** generalize (0.0244 → 0.0232, slightly
+worse than baseline). The guardrail rejected it.
+
+**Dogfooding also caught a real guardrail bug.** The holdout gate was comparing the candidate against a
+floor of 0 instead of the incumbent's holdout metric, because the SOTA's holdout metric lives on the
+trace *trial* (`holdout_metrics`), while the code only looked for it on the `--sota` run JSON. Fixed to
+prefer the trace trial; locked with a regression test (`test_holdout_compared_against_sota_trial_not_floor`).
+The re-judgement ran in ~1 s on the cached run JSONs — **no Docker** — demonstrating the file-based
+resumability from §9 (a candidate's backtests are computed once; re-scoring under a fixed gate is free).
+
+**Parquet route — also validated.** The `run_qlib --factors <combined_factors_df.parquet>` path (for
+factors that need arbitrary Python, not just a qlib expression) was confirmed end-to-end with a
+qlib-computed factor (a `[datetime, instrument] × [("feature", name)]` parquet), returning real metrics
+(IC 0.033, Rank IC 0.037) with no errors. Gotcha for the host-side factor builder: guard it with
+`if __name__ == "__main__":` (qlib's `spawn` multiprocessing — §9).
+
 ## 6. What dissolves vs 0001
 
 - **Embeddings / RAG (0001 §8, §10 open item): gone.** RAG existed to feed a *remote* LLM past
@@ -182,7 +213,8 @@ module. The two paths **share** the guardrail and the knowledge substrate, so th
   v0), consuming `run_qlib` metric JSON. *Gate met: overfit factor rejected; DSR haircut blocks a
   marginal winner as trial count grows.* See §5b.
 - **Phase C — trace tool.** JSON/SQLite DAG ledger owned by `agent_loop`. *Gate: sessions resume.*
-- **Phase D — factor path.** Hand-written factor via `--factors`; agent tests its own alpha end-to-end.
+- **Phase D — factor path (DONE, expression route).** Agent-authored factor run through the full arc
+  (propose → qlib expressions → run on selection + locked holdout → guardrail). See §5c.
 - **Phase E — skill.** `quant-rd-loop` Claude Code skill = the one-iteration recipe over A–D.
 - **Phase F — knowledge substrate** (0001 §Gap 2 / Phase 3): curated qlib operator/handler/model-card
   corpus the agent reads directly. Later: purged/embargoed CV (0001 §7 v1).
