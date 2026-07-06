@@ -103,6 +103,21 @@ def test_holdout_compared_against_sota_trial_not_floor(tmp_path: Path):
     assert res["decision"] is False
 
 
+def test_beats_sota_net_reads_from_trace_trial(tmp_path: Path):
+    """With no --sota run JSON, the net-IR gate must read the incumbent's net IR from the accepted
+    trace trial's selection_metrics — so the ledger alone drives the gate (Phase E)."""
+    cand = _make_run(tmp_path, "cand", sr_ann=1.0)                       # candidate net IR = 1.0
+    hold = _make_run(tmp_path, "hold", sr_ann=0.0, holdout_rank_ic=0.05)
+    trace_path = tmp_path / "trace.json"
+    trace_path.write_text(json.dumps({
+        "trials": [{"loop": 0, "action": "factor", "decision": True, "sr_period": 0.05,
+                    "selection_metrics": {"1day.excess_return_with_cost.information_ratio": 2.0},
+                    "holdout_metrics": {"Rank IC": 0.01}}],
+        "sota_loop": 0}))
+    res = guardrail.evaluate(candidate=cand, holdout=hold, trace=str(trace_path))
+    assert res["gates"]["beats_sota_net"] is False  # 1.0 < SOTA-trial net IR 2.0
+
+
 def test_missing_holdout_cannot_promote(tmp_path: Path):
     cand = _make_run(tmp_path, "cand", sr_ann=2.2)
     res = guardrail.evaluate(candidate=cand)  # no holdout

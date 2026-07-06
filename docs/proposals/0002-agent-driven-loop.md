@@ -41,9 +41,10 @@ becomes the goal, 0001's program-driven path is the fallback (point LiteLLM at C
   metrics back, with **no `.env` and no LLM call in the path**. See §4.
 - The tools exist: **`agent_loop/run_qlib.py`** (execute), **`agent_loop/guardrail.py`** (the
   deterministic promote/reject gate), and **`agent_loop/trace.py`** (the DAG ledger). All LLM-free.
-- **Phases A–D are done.** The guardrail rejects a deliberately overfit factor and applies a real
+- **Phases A–E are done.** The guardrail rejects a deliberately overfit factor and applies a real
   Deflated-Sharpe haircut; the trace ledger closes the loop (feeds real `N` + SOTA back to the
-  guardrail). Tests: `agent_loop/tests/` (9 passing: 5 guardrail + 4 trace).
+  guardrail); and the `quant-rd-loop` skill wires one full iteration. Tests: `agent_loop/tests/`
+  (10 passing: 6 guardrail + 4 trace).
 - `agent_loop/` is a **new top-level package kept outside `rdagent/`** so upstream merges stay cheap
   (0001 §10). Do not put loop-driving logic inside `rdagent/`.
 
@@ -67,9 +68,10 @@ becomes the goal, 0001's program-driven path is the fallback (point LiteLLM at C
 2. ~~`trace` tool~~ — **DONE** (`agent_loop/trace.py`). See §5d.
 3. ~~factor injection path~~ — **DONE** (both the `--features` expression route and the `--factors`
    parquet route). See §5c.
-4. **Claude Code skill `quant-rd-loop`** — the one-iteration recipe wiring the agent + the three tools.
-   This is the next deliverable: `guardrail.evaluate(... trace=LEDGER)` then `trace.record(...)`, with
-   the agent doing propose/code and reading `trace.show` for context.
+4. ~~Claude Code skill `quant-rd-loop`~~ — **DONE** (`agent_loop/skills/quant-rd-loop/SKILL.md`). See §5e.
+
+**Now open:** run real loop iterations at scale via the skill (accumulate a trace, watch DSR/overfitting
+drift), and Phase F (curated qlib knowledge substrate the agent reads when proposing).
 
 ---
 
@@ -212,6 +214,25 @@ loop action  verdict sel RankIC hold RankIC     gap    DSR  hypothesis
 selection-vs-holdout gap (+0.0155 vs +0.0039) is the visible overfitting fingerprint. Tests:
 `agent_loop/tests/test_trace.py` (4 passing), incl. a ledger→guardrail round-trip.
 
+## 5e. The `quant-rd-loop` skill (built)
+
+`agent_loop/skills/quant-rd-loop/SKILL.md` — a Claude Code skill = **the one-iteration recipe** that
+makes the agent the brain and the three tools the hands: read `trace show` for context → propose a
+hypothesis and author a factor (qlib expression via `--features`, or arbitrary-Python via `--factors`)
+**without looking at the holdout** → `run_qlib` on selection + the locked holdout → `guardrail` (reading
+the ledger for `N`/SOTA) → `trace record` → report. It encodes the fixed segment policy (selection 2018,
+locked holdout 2019) and the scientific invariant (never optimize toward, or change, the holdout).
+
+Repo layout note: the tracked source of truth lives under `agent_loop/skills/` because this repo
+gitignores `.claude/`. To activate it in a session, install a copy:
+
+```bash
+mkdir -p .claude/skills/quant-rd-loop && cp agent_loop/skills/quant-rd-loop/SKILL.md .claude/skills/quant-rd-loop/
+```
+
+The skill's judge step calls `guardrail --candidate … --holdout … --trace $LEDGER` with **no** `--sota`:
+the ledger alone supplies `N`, the SOTA holdout, and the SOTA net IR (verified end-to-end via CLI).
+
 ## 6. What dissolves vs 0001
 
 - **Embeddings / RAG (0001 §8, §10 open item): gone.** RAG existed to feed a *remote* LLM past
@@ -246,7 +267,8 @@ module. The two paths **share** the guardrail and the knowledge substrate, so th
   state means a session resumes from the ledger.* See §5d.
 - **Phase D — factor path (DONE, expression route).** Agent-authored factor run through the full arc
   (propose → qlib expressions → run on selection + locked holdout → guardrail). See §5c.
-- **Phase E — skill.** `quant-rd-loop` Claude Code skill = the one-iteration recipe over A–D.
+- **Phase E — skill (DONE).** `quant-rd-loop` Claude Code skill = the one-iteration recipe over A–D
+  (propose → run selection+holdout → guardrail(trace) → record → report). See §5e.
 - **Phase F — knowledge substrate** (0001 §Gap 2 / Phase 3): curated qlib operator/handler/model-card
   corpus the agent reads directly. Later: purged/embargoed CV (0001 §7 v1).
 

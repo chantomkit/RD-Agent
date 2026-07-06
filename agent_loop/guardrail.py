@@ -124,8 +124,22 @@ def _load(obj: str | dict | None) -> dict | None:
     return json.loads(Path(obj).read_text())
 
 
+_NET_IR = "1day.excess_return_with_cost.information_ratio"
+
+
 def _ir_with_cost(res: dict) -> float:
-    return float(res["metrics"]["1day.excess_return_with_cost.information_ratio"])
+    return float(res["metrics"][_NET_IR])
+
+
+def _net_ir_of(obj: dict | None) -> float | None:
+    """Net-of-cost IR from a run JSON (`metrics`) or a trace trial (`selection_metrics`)."""
+    if not isinstance(obj, dict):
+        return None
+    for key in ("metrics", "selection_metrics"):
+        m = obj.get(key)
+        if m and _NET_IR in m:
+            return float(m[_NET_IR])
+    return None
 
 
 def _sota_from_trace(trace: dict | None) -> dict | None:
@@ -191,12 +205,16 @@ def evaluate(
     net_positive = cand_ir_net > 0.0
     reasons.append(f"net IR(with cost)={cand_ir_net:+.4f} {'> 0' if net_positive else '<= 0 (reject gross-only)'}")
 
-    # gate: beats SOTA net-of-cost
-    sota_ir_net = _ir_with_cost(sota_sel) if sota_sel and "metrics" in sota_sel else 0.0
+    # gate: beats SOTA net-of-cost. Incumbent net IR comes from the --sota run JSON or, failing that,
+    # the accepted trace trial's selection_metrics (so the ledger alone can drive the gate).
+    sota_ir_net = next((v for v in (_net_ir_of(sota_sel), _net_ir_of(sota_trial)) if v is not None), None)
+    have_incumbent = sota_ir_net is not None
+    if not have_incumbent:
+        sota_ir_net = 0.0
     beats_sota_net = cand_ir_net > sota_ir_net + cost_margin
     reasons.append(
         f"net IR beats SOTA: {cand_ir_net:+.4f} vs {sota_ir_net:+.4f}+{cost_margin} -> {beats_sota_net}"
-        + ("" if sota_sel else " (no incumbent -> bar is 0)")
+        + ("" if have_incumbent else " (no incumbent -> bar is 0)")
     )
 
     # gate: locked holdout
