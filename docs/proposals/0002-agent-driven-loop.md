@@ -39,10 +39,11 @@ becomes the goal, 0001's program-driven path is the fallback (point LiteLLM at C
 **What is true right now (verified this session):**
 - **Slice 1 is proven.** A cold session drove a Dockerized qlib backtest end-to-end and got real
   metrics back, with **no `.env` and no LLM call in the path**. See §4.
-- The tools exist: **`agent_loop/run_qlib.py`** (execute) and **`agent_loop/guardrail.py`** (the
-  deterministic promote/reject gate). Both are LLM-free.
-- **Phase B is done too:** the guardrail rejects a deliberately overfit factor and applies a real
-  Deflated-Sharpe multiple-testing haircut. Tests: `agent_loop/tests/test_guardrail.py` (4 passing).
+- The tools exist: **`agent_loop/run_qlib.py`** (execute), **`agent_loop/guardrail.py`** (the
+  deterministic promote/reject gate), and **`agent_loop/trace.py`** (the DAG ledger). All LLM-free.
+- **Phases A–D are done.** The guardrail rejects a deliberately overfit factor and applies a real
+  Deflated-Sharpe haircut; the trace ledger closes the loop (feeds real `N` + SOTA back to the
+  guardrail). Tests: `agent_loop/tests/` (9 passing: 5 guardrail + 4 trace).
 - `agent_loop/` is a **new top-level package kept outside `rdagent/`** so upstream merges stay cheap
   (0001 §10). Do not put loop-driving logic inside `rdagent/`.
 
@@ -63,13 +64,12 @@ becomes the goal, 0001's program-driven path is the fallback (point LiteLLM at C
 
 **Next deliverables (in order):**
 1. ~~`guardrail` tool~~ — **DONE** (`agent_loop/guardrail.py`). See §5b.
-2. **`trace`** tool — a simple JSON/SQLite DAG ledger the agent owns (exp + agent's qualitative
-   feedback + guardrail stats). Schema is already defined in `guardrail.py` (the `trials` list it
-   reads). Do *not* reuse `LoopBase.load`/checkpoint machinery — it is coupled to the program loop.
-3. **factor injection path** — exercise `run_qlib.py --factors` with a real hand-written factor
-   (`combined_factors_df.parquet`) so the agent can test its own alpha, not just the Alpha20 baseline.
-   This is what produces the candidate + locked-holdout runs the guardrail consumes.
+2. ~~`trace` tool~~ — **DONE** (`agent_loop/trace.py`). See §5d.
+3. ~~factor injection path~~ — **DONE** (both the `--features` expression route and the `--factors`
+   parquet route). See §5c.
 4. **Claude Code skill `quant-rd-loop`** — the one-iteration recipe wiring the agent + the three tools.
+   This is the next deliverable: `guardrail.evaluate(... trace=LEDGER)` then `trace.record(...)`, with
+   the agent doing propose/code and reading `trace.show` for context.
 
 ---
 
@@ -183,6 +183,35 @@ qlib-computed factor (a `[datetime, instrument] × [("feature", name)]` parquet)
 (IC 0.033, Rank IC 0.037) with no errors. Gotcha for the host-side factor builder: guard it with
 `if __name__ == "__main__":` (qlib's `spawn` multiprocessing — §9).
 
+## 5d. The `trace` tool (built)
+
+`agent_loop/trace.py` — `python -m agent_loop.trace {init|record|show}`. A plain-JSON DAG ledger the
+agent owns; **not** RD-Agent's `LoopBase` checkpoint machinery (that is coupled to the program loop).
+Its schema is the contract `guardrail.py` already reads, so recorded trials feed the real trial count
+`N` and the real SOTA back into the next judgement — **closing the loop** without synthetic traces:
+
+```
+guardrail.evaluate(candidate, holdout, trace=LEDGER)  ->  decision
+trace.record(candidate, holdout, decision, hypothesis=..., path=LEDGER)   # append; updates sota_loop
+```
+
+`record` computes each trial's per-period Sharpe from its `ret.pkl`, stores compact selection/holdout
+metric subsets + the guardrail verdict, and promotes `sota_loop` on acceptance. `show` prints the trial
+table and the **selection-vs-holdout Rank IC gap** — the overfitting-drift signal.
+
+**Real closed-loop demo** (Phase-D run JSONs, no Docker): seeding the Alpha20 baseline as SOTA (loop 0)
+then judging the candidate produced this ledger —
+
+```
+loop action  verdict sel RankIC hold RankIC     gap    DSR  hypothesis
+   0 factor     SOTA     0.0283      0.0244 +0.0039    nan  Alpha20 base handler (seed SOTA)
+   1 factor   reject     0.0387      0.0232 +0.0155  0.139  add RET5 + VOLR + AMP10 to Alpha20
+```
+
+— the guardrail read the ledger for `N=2` and the SOTA holdout (0.0244), and the candidate's inflated
+selection-vs-holdout gap (+0.0155 vs +0.0039) is the visible overfitting fingerprint. Tests:
+`agent_loop/tests/test_trace.py` (4 passing), incl. a ledger→guardrail round-trip.
+
 ## 6. What dissolves vs 0001
 
 - **Embeddings / RAG (0001 §8, §10 open item): gone.** RAG existed to feed a *remote* LLM past
@@ -212,7 +241,9 @@ module. The two paths **share** the guardrail and the knowledge substrate, so th
 - **Phase B — guardrail tool (DONE).** Deterministic holdout + Deflated Sharpe + cost margin (0001 §7
   v0), consuming `run_qlib` metric JSON. *Gate met: overfit factor rejected; DSR haircut blocks a
   marginal winner as trial count grows.* See §5b.
-- **Phase C — trace tool.** JSON/SQLite DAG ledger owned by `agent_loop`. *Gate: sessions resume.*
+- **Phase C — trace tool (DONE).** Plain-JSON DAG ledger owned by `agent_loop`; closes the loop by
+  feeding real `N` + SOTA back to the guardrail. *Gate met: ledger→guardrail round-trip; file-based
+  state means a session resumes from the ledger.* See §5d.
 - **Phase D — factor path (DONE, expression route).** Agent-authored factor run through the full arc
   (propose → qlib expressions → run on selection + locked holdout → guardrail). See §5c.
 - **Phase E — skill.** `quant-rd-loop` Claude Code skill = the one-iteration recipe over A–D.
