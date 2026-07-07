@@ -258,6 +258,38 @@ The `quant-rd-loop` skill's propose step now instructs the agent to read this su
 expressions only from documented operators/fields. Tests (`agent_loop/tests/test_knowledge.py`): the
 substrate is present and the real base features (`ALPHA20`) are fully grounded in it.
 
+## 5g. Running on recent data / other markets (US path)
+
+The public qlib bundles (`cn_data`, prebuilt `us_data`) are **frozen ~2020**, so "use 2024–2026 data"
+required provisioning fresh data. Built and verified end-to-end:
+
+- **`agent_loop/data/build_us.py` + `data/README.md`** — fetch adjusted daily OHLCV from Yahoo
+  (yfinance) for a fixed large-cap universe (+ `^GSPC`→`SPX` benchmark) → per-symbol CSVs → qlib binary
+  via qlib's `dump_bin.py`. Result: `~/.qlib/qlib_data/us_data`, 102 stocks, calendar to **2026-07-02**.
+- **`agent_loop/qlib_templates/us_template/`** — US conf templates (`provider_uri=us_data`, `region=us`,
+  `market=universe`, `benchmark=SPX`, no CN price-limit, `topk=30/n_drop=3`). Label + Alpha158 unchanged.
+- **`run_qlib --template_dir <dir>`** — new flag to run against a custom template (default cn behavior
+  unchanged). The Docker env already mounts `~/.qlib`, so `us_data` is visible with no mount change.
+
+**Verified loop run** — selection **2024**, locked holdout **2025–2026**:
+
+```
+loop verdict sel RankIC hold RankIC    DSR   net IR(cost)
+   0 SOTA       -0.0023      0.0077    nan   -0.64   (US Alpha20 baseline)
+   1 reject     -0.0001      0.0071   0.016  -1.61   (higher-moment/lottery/illiquidity)
+```
+
+**Honest finding:** on a small, efficient US large-cap universe, the CN-tuned Alpha features carry
+**~no cross-sectional signal** (Rank IC ≈ 0 everywhere), and the candidate's extra factors only added
+turnover (net IR −1.6) — REJECTED on all four gates. The loop refused to promote noise; the negative
+gap (selection < holdout) confirms there was no in-sample edge to overfit. This points at real next
+steps (broader universe, US-appropriate features, lower turnover), which is exactly what the loop is for.
+
+**Caveats (see `data/README.md`):** survivorship bias (fixed current universe), adjusted prices
+(`factor=1`), end the holdout a few weeks before the data edge (qlib peeks one day ahead to execute the
+final rebalance), and the knowledge substrate is still cn-extracted (regenerate `build.py` against
+`us_data` for field-sensitive US factors).
+
 ## 6. What dissolves vs 0001
 
 - **Embeddings / RAG (0001 §8, §10 open item): gone.** RAG existed to feed a *remote* LLM past

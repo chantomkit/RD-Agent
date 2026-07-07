@@ -73,6 +73,7 @@ def _load_features(features: str | None) -> dict[str, str]:
 def run(
     conf: str = "conf_baseline.yaml",
     template: str = "factor",
+    template_dir: str | None = None,
     factors: str | None = None,
     features: str | None = None,
     train_start: str | None = None,
@@ -100,11 +101,14 @@ def run(
 
     MODEL_COSTEER_SETTINGS.env_type = env  # execute() reads this at call time
 
-    template_dir = _template_dir(template)
-    conf_path = template_dir / conf
+    # A custom template_dir (e.g. the US templates) overrides the built-in rdagent factor/model template.
+    tdir = Path(template_dir) if template_dir else _template_dir(template)
+    if not (tdir / "read_exp_res.py").exists():
+        raise FileNotFoundError(f"template dir {tdir} missing read_exp_res.py")
+    conf_path = tdir / conf
     if not conf_path.exists():
-        available = sorted(p.name for p in template_dir.glob("conf*.yaml"))
-        raise FileNotFoundError(f"{conf!r} not in {template_dir}. Available: {available}")
+        available = sorted(p.name for p in tdir.glob("conf*.yaml"))
+        raise FileNotFoundError(f"{conf!r} not in {tdir}. Available: {available}")
 
     feats = _load_features(features)
     run_env = {
@@ -125,7 +129,7 @@ def run(
         if v is not None:
             run_env[k] = v
 
-    ws = QlibFBWorkspace(template_folder_path=template_dir)
+    ws = QlibFBWorkspace(template_folder_path=tdir)
     if factors is not None:
         src = Path(factors)
         if not src.exists():
