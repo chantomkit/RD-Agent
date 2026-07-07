@@ -1,0 +1,105 @@
+qlib_init:
+    provider_uri: "~/.qlib/qlib_data/us_data"
+    region: us
+
+market: &market universe          # 102 US large-caps (instruments/universe.txt); SPX excluded (benchmark)
+benchmark: &benchmark SPX
+
+data_handler_config: &data_handler_config
+    start_time: {{ train_start | default("2015-01-01", true) }}
+    end_time: {{ test_end | default("null", true) }}
+    instruments: *market
+    data_loader:
+        class: NestedDataLoader
+        kwargs:
+            dataloader_l:
+                - class: qlib.contrib.data.loader.Alpha158DL
+                  kwargs:
+                    config:
+                        label:
+                            - ["Ref($close, -2)/Ref($close, -1) - 1"]
+                            - ["LABEL0"]
+                        feature:
+                            - {{ feature_expressions }}
+                            - {{ feature_names }}
+
+    infer_processors:
+        - class: RobustZScoreNorm
+          kwargs:
+              fields_group: feature
+              clip_outlier: true
+              fit_start_time: {{ train_start | default("2015-01-01", true) }}
+              fit_end_time: {{ train_end | default("2021-12-31", true) }}
+        - class: Fillna
+          kwargs:
+              fields_group: feature
+    learn_processors:
+        - class: DropnaLabel
+        - class: CSZScoreNorm
+          kwargs:
+              fields_group: label
+
+port_analysis_config: &port_analysis_config
+    strategy:
+        class: TopkDropoutStrategy
+        module_path: qlib.contrib.strategy
+        kwargs:
+            signal: <PRED>
+            # Portfolio/turnover knobs are configurable so the loop can explore turnover (env-injected).
+            topk: {{ topk | default(30, true) }}
+            n_drop: {{ n_drop | default(3, true) }}
+            hold_thresh: {{ hold_thresh | default(1, true) }}   # min holding days; raise to cut turnover
+    backtest:
+        start_time: {{ test_start | default("2024-01-01", true) }}
+        end_time: {{ test_end | default("null", true) }}
+        account: 100000000
+        benchmark: *benchmark
+        exchange_kwargs:
+            deal_price: close
+            # US costs: ~5bps/side, SYMMETRIC. The cn template's close_cost=0.0015 encodes CN's 0.1%
+            # sell stamp duty, which does not exist in US. No daily price limit either (CN-only rule).
+            open_cost: {{ open_cost | default(0.0005, true) }}
+            close_cost: {{ close_cost | default(0.0005, true) }}
+            min_cost: 0
+
+task:
+    model:
+        class: LGBModel
+        module_path: qlib.contrib.model.gbdt
+        kwargs:
+            loss: mse
+            colsample_bytree: 0.8879
+            learning_rate: 0.2
+            subsample: 0.8789
+            lambda_l1: 205.6999
+            lambda_l2: 580.9768
+            max_depth: 8
+            num_leaves: 210
+            num_threads: 20
+    dataset:
+        class: DatasetH
+        module_path: qlib.data.dataset
+        kwargs:
+            handler:
+                class: DataHandlerLP
+                module_path: qlib.contrib.data.handler
+                kwargs: *data_handler_config
+            segments:
+                train: [{{ train_start | default("2015-01-01", true) }}, {{ train_end | default("2021-12-31", true) }}]
+                valid: [{{ valid_start | default("2022-01-01", true) }}, {{ valid_end | default("2023-12-31", true) }}]
+                test: [{{ test_start | default("2024-01-01", true) }}, {{ test_end | default("null", true) }}]
+    record:
+        - class: SignalRecord
+          module_path: qlib.workflow.record_temp
+          kwargs:
+            model: <MODEL>
+            dataset: <DATASET>
+        - class: SigAnaRecord
+          module_path: qlib.workflow.record_temp
+          kwargs:
+            ana_long_short: True    # emits dollar-neutral "Long-Short Ann Sharpe" = pure alpha (beta-free)
+            ann_scaler: 252
+        - class: PortAnaRecord
+          module_path: qlib.workflow.record_temp
+          kwargs:
+            config: *port_analysis_config
