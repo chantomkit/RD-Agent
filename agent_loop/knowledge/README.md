@@ -6,16 +6,16 @@
 Curated, retrievable knowledge the agent reads **directly** when proposing factors/models (no embeddings/RAG — see ADR 0002 §6). Read these before authoring an expression so factors reference real operators/fields instead of invented ones.
 
 
-Extracted from **qlib 0.9.8.dev31**.
+Extracted from **qlib 0.9.8.dev31**. Datasets documented: `cn_data` (7), `us_data` (6).
 
 
 | file | contents | source |
 |---|---|---|
 | `operators.md` | 45 expression operators + signatures | extracted from `qlib.data.ops` |
-| `fields.md` | 7 base `$` fields + label convention | extracted from the dataset |
+| `fields.md` | base `$` fields **per dataset** (cn vs us) + label convention | extracted from each dataset |
 | `handlers.md` | Alpha158 (158) + Alpha360 (360) catalogs | extracted from `qlib.contrib.data.loader` |
 | `metrics.md` | metric glossary + which the guardrail uses | curated |
 | `models.md` | model cards (LGBM + PyTorch `model.py` interface) | curated |
 
-Regenerate the extracted files: `~/anaconda3/envs/qlib/bin/python -m agent_loop.knowledge.build`
+Regenerate: `~/anaconda3/envs/qlib/bin/python -m agent_loop.knowledge.build --providers cn_data,us_data`
 

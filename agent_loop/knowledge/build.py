@@ -16,6 +16,8 @@ import re
 from datetime import date
 from pathlib import Path
 
+import fire
+
 HERE = Path(__file__).resolve().parent
 PROVIDER_URI = Path("~/.qlib/qlib_data/cn_data").expanduser()
 
@@ -61,13 +63,12 @@ def extract_operators() -> list[tuple[str, str, str, str]]:
     return rows
 
 
-def extract_fields() -> list[str]:
-    feats = PROVIDER_URI / "features"
+def extract_fields(provider: str = "cn_data") -> list[str]:
+    feats = Path(f"~/.qlib/qlib_data/{provider}").expanduser() / "features"
     inst_dirs = [p for p in feats.iterdir() if p.is_dir()] if feats.exists() else []
     if not inst_dirs:
         return []
-    fields = sorted({f.name.split(".")[0] for f in inst_dirs[0].glob("*.bin")})
-    return fields
+    return sorted({f.name.split(".")[0] for f in inst_dirs[0].glob("*.bin")})
 
 
 def extract_handlers() -> dict:
@@ -96,21 +97,28 @@ def write_operators(rows) -> None:
     (HERE / "operators.md").write_text("\n".join(out) + "\n")
 
 
-def write_fields(fields, absent_in_dataset) -> None:
-    out = [_provenance("extracted"), "# Base data fields (this dataset: cn_data / csi300)\n",
-           "Only these `$` fields exist in the installed dataset. **Do not reference any field not listed "
-           "here.** Prefix each with `$` in expressions.\n\n"]
-    out.append("| field | note |\n|---|---|")
+def write_fields(fields_by_ds: dict[str, list[str]], absent_by_ds: dict[str, list[str]]) -> None:
+    datasets = list(fields_by_ds.keys())
+    all_fields = sorted(set().union(*fields_by_ds.values())) if fields_by_ds else []
     notes = {"open": "open price (adjusted)", "close": "close price (adjusted)", "high": "high",
              "low": "low", "volume": "volume", "factor": "adjustment factor", "change": "daily change"}
-    for f in fields:
-        out.append(f"| `${f}` | {notes.get(f, '')} |")
-    if absent_in_dataset:
-        absent = ", ".join(f"`${x}`" for x in absent_in_dataset)
-        out.append(f"\n## ⚠️ Absent fields — DO NOT USE\n\n"
-                   f"The stock Alpha158/Alpha360 handlers reference {absent}, but **this dataset does not "
-                   f"contain {'them' if len(absent_in_dataset) > 1 else 'it'}.** Any feature or expression "
-                   f"using {absent} resolves to NaN and will silently degrade the model. Avoid entirely.\n")
+    out = [_provenance("extracted"), "# Base data fields (per installed dataset)\n",
+           "Reference **only** fields available in the dataset your loop runs on — availability differs by "
+           "market (e.g. `cn_data` has `$change`, `us_data` does not; neither has `$vwap`). Prefix each "
+           "with `$` in expressions.\n\n"]
+    header = "| field | note | " + " | ".join(f"`{d}`" for d in datasets) + " |"
+    out.append(header)
+    out.append("|---|---|" + "|".join(["---"] * len(datasets)) + "|")
+    for f in all_fields:
+        avail = " | ".join("yes" if f in fields_by_ds[d] else "—" for d in datasets)
+        out.append(f"| `${f}` | {notes.get(f, '')} | {avail} |")
+    for d, absent in absent_by_ds.items():
+        if absent:
+            a = ", ".join(f"`${x}`" for x in absent)
+            out.append(f"\n## ⚠️ On `{d}`: DO NOT USE {a}\n\n"
+                       f"Alpha158/Alpha360 reference {a}, but `{d}` does **not** contain "
+                       f"{'them' if len(absent) > 1 else 'it'}; any feature using {a} resolves to NaN and "
+                       f"silently degrades the model. Avoid.\n")
     out.append("\n## Label convention (from the qlib templates)\n")
     out.append("The prediction label is the 2-day-ahead forward return: `Ref($close, -2)/Ref($close, -1) - 1`. "
                "Because the label horizon is 2 days, any leakage-safe CV must embargo >= 2 days (ADR 0001 §7 v1).\n")
@@ -140,22 +148,23 @@ def write_handlers(h, absent_in_dataset) -> None:
     (HERE / "handlers.md").write_text("\n".join(out) + "\n")
 
 
-def write_readme(n_ops, n_fields, h) -> None:
+def write_readme(n_ops, fields_by_ds: dict[str, list[str]], h) -> None:
     import qlib
 
+    ds = ", ".join(f"`{d}` ({len(f)})" for d, f in fields_by_ds.items())
     out = [_provenance("index"), "# qlib capability substrate\n",
            "Curated, retrievable knowledge the agent reads **directly** when proposing factors/models "
            "(no embeddings/RAG — see ADR 0002 §6). Read these before authoring an expression so factors "
            "reference real operators/fields instead of invented ones.\n",
-           f"\nExtracted from **qlib {qlib.__version__}**.\n",
+           f"\nExtracted from **qlib {qlib.__version__}**. Datasets documented: {ds}.\n",
            "\n| file | contents | source |",
            "|---|---|---|",
            f"| `operators.md` | {n_ops} expression operators + signatures | extracted from `qlib.data.ops` |",
-           f"| `fields.md` | {n_fields} base `$` fields + label convention | extracted from the dataset |",
+           "| `fields.md` | base `$` fields **per dataset** (cn vs us) + label convention | extracted from each dataset |",
            f"| `handlers.md` | Alpha158 ({len(h['a158'])}) + Alpha360 ({len(h['a360'])}) catalogs | extracted from `qlib.contrib.data.loader` |",
            "| `metrics.md` | metric glossary + which the guardrail uses | curated |",
            "| `models.md` | model cards (LGBM + PyTorch `model.py` interface) | curated |",
-           "\nRegenerate the extracted files: `~/anaconda3/envs/qlib/bin/python -m agent_loop.knowledge.build`\n"]
+           "\nRegenerate: `~/anaconda3/envs/qlib/bin/python -m agent_loop.knowledge.build --providers cn_data,us_data`\n"]
     (HERE / "README.md").write_text("\n".join(out) + "\n")
 
 
@@ -166,31 +175,41 @@ def _referenced(h) -> tuple[set[str], set[str]]:
     return ops, fields
 
 
-def main() -> None:
+def main(providers: str = "cn_data,us_data") -> None:
+    """Regenerate the substrate. `providers` = comma-list of installed qlib datasets to document."""
     rows = extract_operators()
-    fields = extract_fields()
     h = extract_handlers()
-    if not fields:
-        raise SystemExit(f"no fields found under {PROVIDER_URI}/features — is the dataset extracted?")
-
-    used_ops, used_fields = _referenced(h)
     op_names = {r[0] for r in rows}
-    # Hard requirement: every operator the handlers use must be documented (else extraction is incomplete).
+    used_ops, used_fields = _referenced(h)
     missing_ops = used_ops - op_names
     assert not missing_ops, f"operators used by handlers but undocumented (extractor bug): {missing_ops}"
-    # Soft finding: fields the handlers assume but the dataset lacks (e.g. $vwap) — a documented caveat.
-    absent_fields = sorted(used_fields - set(fields))
 
+    # fire passes a comma-list as a tuple; accept str or iterable.
+    ds_names = ([p.strip() for p in providers.split(",")] if isinstance(providers, str)
+                else [str(p).strip() for p in providers])
+    fields_by_ds: dict[str, list[str]] = {}
+    absent_by_ds: dict[str, list[str]] = {}
+    for ds in (d for d in ds_names if d):
+        f = extract_fields(ds)
+        if not f:
+            print(f"[build] skip {ds}: not installed")
+            continue
+        fields_by_ds[ds] = f
+        absent_by_ds[ds] = sorted(used_fields - set(f))  # handler-referenced fields the dataset lacks
+    if not fields_by_ds:
+        raise SystemExit("no datasets found under ~/.qlib/qlib_data — is data extracted?")
+
+    union_absent = sorted(set().union(*absent_by_ds.values()))
     write_operators(rows)
-    write_fields(fields, absent_fields)
-    write_handlers(h, absent_fields)
-    write_readme(len(rows), len(fields), h)
+    write_fields(fields_by_ds, absent_by_ds)
+    write_handlers(h, union_absent)
+    write_readme(len(rows), fields_by_ds, h)
     print(f"[build] operators grounded: {len(used_ops)} handler ops all documented.")
-    if absent_fields:
-        print(f"[build] CAVEAT documented: handlers reference {absent_fields} absent from this dataset.")
-    print(f"[build] wrote operators.md ({len(rows)}), fields.md ({len(fields)}), "
+    for ds, absent in absent_by_ds.items():
+        print(f"[build] {ds}: {len(fields_by_ds[ds])} fields; absent-and-caveated: {absent}")
+    print(f"[build] wrote operators.md ({len(rows)}), fields.md ({list(fields_by_ds)}), "
           f"handlers.md (A158={len(h['a158'])}, A360={len(h['a360'])}), README.md")
 
 
 if __name__ == "__main__":
-    main()
+    fire.Fire(main)

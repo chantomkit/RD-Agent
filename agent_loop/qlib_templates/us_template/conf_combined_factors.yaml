@@ -48,8 +48,9 @@ port_analysis_config: &port_analysis_config
         module_path: qlib.contrib.strategy
         kwargs:
             signal: <PRED>
-            topk: 30
-            n_drop: 3
+            topk: {{ topk | default(30, true) }}
+            n_drop: {{ n_drop | default(3, true) }}
+            hold_thresh: {{ hold_thresh | default(1, true) }}   # min holding days; raise to cut turnover
     backtest:
         start_time: {{ test_start | default("2024-01-01", true) }}
         end_time: {{ test_end | default("null", true) }}
@@ -57,9 +58,10 @@ port_analysis_config: &port_analysis_config
         benchmark: *benchmark
         exchange_kwargs:
             deal_price: close
-            open_cost: 0.0005
-            close_cost: 0.0015
-            min_cost: 1
+            # US: symmetric ~5bps/side (no CN sell stamp duty); no daily price limit.
+            open_cost: {{ open_cost | default(0.0005, true) }}
+            close_cost: {{ close_cost | default(0.0005, true) }}
+            min_cost: 0
 
 task:
     model:

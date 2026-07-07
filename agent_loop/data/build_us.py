@@ -38,13 +38,33 @@ DEFAULT_UNIVERSE = (
 ).split()
 
 
-def build(csv_out: str, tickers: str | None = None, start: str = "2015-01-01", end: str = "2026-07-06",
-          chunk: int = 40) -> None:
+def _sp500_tickers() -> list[str]:
+    """Current S&P500 constituents from Wikipedia (needs a browser UA; urllib default is 403'd)."""
+    import io
+
+    import requests
+
+    hdr = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+           "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36"}
+    r = requests.get("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies", headers=hdr, timeout=20)
+    r.raise_for_status()
+    tbl = pd.read_html(io.StringIO(r.text))[0]
+    return sorted({str(s).replace(".", "-") for s in tbl["Symbol"].tolist()})
+
+
+def build(csv_out: str, tickers: str | None = None, sp500: bool = False,
+          start: str = "2015-01-01", end: str = "2026-07-06", chunk: int = 40) -> None:
     import yfinance as yf
 
     out = Path(csv_out)
     out.mkdir(parents=True, exist_ok=True)
-    tick = [t.strip() for t in tickers.split(",")] if tickers else list(DEFAULT_UNIVERSE)
+    if tickers:
+        tick = [t.strip() for t in tickers.split(",")]
+    elif sp500:
+        tick = _sp500_tickers()
+        print(f"[build_us] S&P500 universe: {len(tick)} tickers")
+    else:
+        tick = list(DEFAULT_UNIVERSE)
     tick = sorted(set(tick)) + ["^GSPC"]
     print(f"[build_us] {len(tick)} symbols, {start}..{end}")
 

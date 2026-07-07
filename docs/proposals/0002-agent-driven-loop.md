@@ -321,6 +321,36 @@ rejects for the *right, fair* reason. Tests: `test_beats_baselines_gate`, `test_
 (suite 15). Also on the roadmap (not yet done): validate the seed champion instead of force-promoting it,
 and add a market-neutral (long-short) evaluation to separate alpha from beta.
 
+## 5i. CN→US infrastructure fixes (system-level, not strategy tuning)
+
+Several defaults were CN-baggage that quietly crippled US results. Fixing them at the infra level helps
+**every** future US loop:
+
+- **Universe breadth** — `build_us.py --sp500` (Wikipedia list via a browser UA + requests) rebuilds
+  `us_data` with the **full S&P500** (500 names + SPX) instead of a 102-name fallback. More names to rank
+  = more cross-sectional signal.
+- **Cost model** — the cn template's `close_cost=0.0015` encodes CN's 0.1% **sell stamp duty**, absent in
+  US. US template now uses **symmetric ~5bps/side** (`open_cost=close_cost=0.0005`, `min_cost=0`).
+- **Configurable turnover** — `topk`, `n_drop`, `hold_thresh`, `open_cost`, `close_cost` are now Jinja
+  params injected by `run_qlib` (not hard-coded), so the loop can *explore* turnover (e.g. raise
+  `hold_thresh` to cut it) instead of me picking a value.
+- **US-aware substrate** — `knowledge/build.py --providers cn_data,us_data` regenerates a **per-dataset**
+  `fields.md` (US has no `$change`; neither has `$vwap`), so proposals reference fields that exist.
+
+**Impact — the same Alpha20 baseline, OOS on 2024 (trained 2015–21):**
+
+| | 102 names + CN cost | S&P500 + US cost |
+|---|---|---|
+| gross IR | +0.26 | **+0.97** |
+| **net IR** | **−0.64** | **+0.75** |
+| net annual return | −3.4% | **+8.5%** |
+| Rank IC | −0.002 | **+0.009** |
+
+The earlier "worse than trivial" US result was **mostly the CN mismatch, not absence of signal**: with the
+right universe + cost model the baseline reaches **net IR +0.75 OOS — at the momentum bar (0.785)**. This
+is the highest-leverage change in the session and validates fixing infrastructure before tuning strategy.
+(Next: re-run the full loop + recompute the baseline panel on the 500-name universe.)
+
 ## 6. What dissolves vs 0001
 
 - **Embeddings / RAG (0001 §8, §10 open item): gone.** RAG existed to feed a *remote* LLM past

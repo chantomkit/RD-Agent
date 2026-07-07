@@ -7,8 +7,10 @@ data (2024–2026) we build a fresh US dataset from Yahoo Finance. One-time reci
 QP=~/anaconda3/envs/qlib/bin           # an env with qlib
 $QP/pip install yfinance loguru
 
-# 1. fetch adjusted daily OHLCV -> per-symbol CSVs (fixed large-cap universe + ^GSPC benchmark)
-$QP/python -m agent_loop.data.build_us /tmp/us_csv
+# 1. fetch adjusted daily OHLCV -> per-symbol CSVs. --sp500 pulls the full S&P500 (needs lxml+requests);
+#    omit it for the built-in ~100 large-cap fallback, or pass --tickers AAPL,MSFT,...
+$QP/pip install lxml requests
+$QP/python -m agent_loop.data.build_us /tmp/us_csv --sp500
 
 # 2. get qlib's dumper and convert CSVs -> qlib binary
 curl -sSL -o /tmp/dump_bin.py https://raw.githubusercontent.com/microsoft/qlib/main/scripts/dump_bin.py
@@ -28,9 +30,12 @@ python -m agent_loop.run_qlib --template_dir agent_loop/qlib_templates/us_templa
 ```
 
 ## What the US templates change vs cn (`agent_loop/qlib_templates/us_template/`)
-`provider_uri=us_data`, `region=us`, `market=universe` (102 large-caps), `benchmark=SPX`, no CN
-price-limit (`limit_threshold` removed), concentrated `topk=30/n_drop=3` for the ~100-name universe.
-Label and Alpha158 features are unchanged.
+`provider_uri=us_data`, `region=us`, `market=universe` (S&P500), `benchmark=SPX`, no CN price-limit
+(`limit_threshold` removed). **Cost model is US-correct:** symmetric ~5bps/side (`open_cost=close_cost=
+0.0005`, `min_cost=0`) — the cn template's `close_cost=0.0015` encodes CN's 0.1% sell **stamp duty**,
+which does not exist in US. **Turnover knobs are configurable** (not hard-coded): `topk`, `n_drop`,
+`hold_thresh`, `open_cost`, `close_cost` are Jinja params injected by `run_qlib` (raise `hold_thresh`
+to cut turnover). Label and Alpha158 features are unchanged.
 
 ## Caveats (real, not hidden)
 - **Survivorship bias:** the universe is a *fixed current* large-cap list, not point-in-time membership.
@@ -41,7 +46,7 @@ Label and Alpha158 features are unchanged.
 - **Signal transfer:** Alpha158/Alpha20 were tuned for CN A-shares; expect weak cross-sectional signal on
   a small, efficient US large-cap universe. That is a research finding, not a bug — it's what the loop
   is for.
-- **Knowledge substrate coupling:** `agent_loop/knowledge/` was extracted against `cn_data`. Field sets
-  differ slightly (US has no `$change`; both lack `$vwap`). Regenerate for US if authoring field-sensitive
-  factors: point `knowledge/build.py`'s `PROVIDER_URI` at `us_data`.
+- **Knowledge substrate:** `agent_loop/knowledge/fields.md` now documents fields **per dataset** (cn vs
+  us) — regenerate with `python -m agent_loop.knowledge.build --providers cn_data,us_data`. (US has no
+  `$change`; neither market has `$vwap`.)
 ```

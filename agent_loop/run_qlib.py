@@ -82,6 +82,11 @@ def run(
     valid_end: str | None = None,
     test_start: str | None = None,
     test_end: str | None = None,
+    topk: int | None = None,
+    n_drop: int | None = None,
+    hold_thresh: int | None = None,
+    open_cost: float | None = None,
+    close_cost: float | None = None,
     env: str = "docker",
     gpu: bool = False,
     timeout: int = 3600,
@@ -125,9 +130,15 @@ def run(
         "valid_end": valid_end,
         "test_start": test_start,
         "test_end": test_end,
+        # strategy / turnover / cost knobs consumed by the (US) template Jinja defaults
+        "topk": topk,
+        "n_drop": n_drop,
+        "hold_thresh": hold_thresh,
+        "open_cost": open_cost,
+        "close_cost": close_cost,
     }.items():
         if v is not None:
-            run_env[k] = v
+            run_env[k] = str(v)
 
     ws = QlibFBWorkspace(template_folder_path=tdir)
     if factors is not None:
