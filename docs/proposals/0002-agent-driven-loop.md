@@ -379,6 +379,26 @@ The Alpha20 baseline (holdout net IR 1.45) is no longer a fake champion — it's
 else because it doesn't beat momentum (1.83). Every future verdict is now measured against an honest,
 non-arbitrary bar. Tests: `test_seed_validation_panel_is_initial_sota`; suite 16.
 
+## 5k. Market-neutral evaluation — alpha, not beta (6th gate)
+
+**Problem:** all the return gates use long-only excess-over-a-cap-weighted-index net IR, which mixes
+cross-sectional **alpha** with **market/size beta** (a long-only topk book is always net-long and tilts
+away from the cap-weighted index). A strategy could look good from beta, not skill.
+
+**Fix:** the US templates set `ana_long_short: True`, so qlib emits a **dollar-neutral long-short Sharpe**
+(`Long-Short Ann Sharpe`) — long the top-ranked, short the bottom-ranked, so market beta ≈ 0 and the
+return is (approximately) pure cross-sectional alpha. The guardrail gains a 6th gate `neutral_alpha_ok`:
+the holdout long-short Sharpe must exceed `neutral_min` (default 0) — i.e. the signal genuinely separates
+winners from losers, not merely rides beta. Skipped when the metric is absent (backward-compatible).
+
+**On the real US S&P500 candidate (MOM12_1 + VOL60), it earned its keep immediately:** the holdout
+long-short Sharpe was **+2.315** — it *passes* the neutral gate (genuine, strong beta-free alpha) — even
+though the candidate is still (correctly) rejected because its **long-only** net IR (1.53) doesn't beat
+momentum (1.83) and its DSR (0.77) isn't robust at N=2. The lens is exactly the point: the signal has
+**real cross-sectional alpha (2.3 L/S Sharpe)** that the long-only-vs-cap-weighted framing *masks*.
+Without market-neutral you'd wrongly call it weak; with it you see alpha worth pursuing (e.g. via a
+market-neutral or lower-turnover implementation). Test: `test_market_neutral_alpha_gate`; suite 17.
+
 ## 6. What dissolves vs 0001
 
 - **Embeddings / RAG (0001 §8, §10 open item): gone.** RAG existed to feed a *remote* LLM past
@@ -418,8 +438,11 @@ module. The two paths **share** the guardrail and the knowledge substrate, so th
 - **Phase F — knowledge substrate (DONE).** qlib operator/field/handler/model-card corpus **extracted
   from the installed qlib** (`agent_loop/knowledge/`), read directly by the agent when proposing; the
   extractor's self-consistency check surfaced the `$vwap`-absent caveat. See §5f.
-- **Next: leakage-safe evaluation (0001 §7 v1).** Purged/embargoed CV (embargo ≥ 2 days for the 2-day
-  label) in the qlib templates + guardrail — the remaining scientific upgrade.
+- **Guardrail hardening (DONE).** Baseline-panel fair-comparison gate (§5h), CN→US infra fixes (§5i),
+  seed validation (§5j), market-neutral gate (§5k) — the guardrail now has 6 gates. **ADR 0002 concluded
+  (§10).**
+- **Remaining (future, not blockers):** leakage-safe purged/embargoed CV (0001 §7 v1, embargo ≥ 2 days),
+  and the research goal itself — a factor that beats the momentum floor.
 
 ---
 
@@ -467,6 +490,35 @@ This is a first-class design constraint, not an afterthought, and it shapes how 
 time: the agent must be re-invoked to advance. That is the deliberate trade in §7. The mitigations above
 (parallel fan-out + filler work + resumable file state) recover a lot of it, but if the goal becomes
 "hundreds of iterations unattended overnight," the program-driven fallback (§7) is the right tool.
+
+---
+
+## 10. Conclusion — ADR 0002 is complete
+
+The agent-driven loop is **built, verified end-to-end, and concluded.** The session agent is the brain
+(propose / code / judge-qualitatively); RD-Agent's machinery + new deterministic tools are the hands,
+with **no second LLM API** in the path.
+
+**Delivered (all in `agent_loop/`, kept outside `rdagent/` for cheap upstream merges):**
+
+| Component | Role |
+|---|---|
+| `run_qlib.py` | Dockerized qlib backtest as a tool (cn or us via `--template_dir`); configurable turnover |
+| `guardrail.py` | deterministic promote/reject — **6 gates**: holdout-beats-SOTA · Deflated Sharpe · net-positive · beats-SOTA-net · **beats trivial-baseline panel** · **market-neutral alpha** |
+| `baselines.py` | trivial panel {buy_hold, eqw_1n, momentum, random_p95}, in-process, no Docker |
+| `trace.py` | JSON DAG ledger; the **panel is the initial SOTA floor** (seed-validation, not hand-seeding) |
+| `knowledge/` | qlib capability substrate, extracted, **per-dataset** (cn/us) |
+| `data/` + `qlib_templates/us_template/` | provision recent US data (S&P500 → 2026) + US-correct templates |
+| `skills/quant-rd-loop/` | the one-iteration recipe wiring it all |
+
+**The scientific thesis holds:** across CN and US, the loop repeatedly refused to promote factors that a
+metric-eyeballing LLM-judge would have accepted — overfit-on-selection factors, gross-only winners,
+strategies that lose to a one-line momentum rule, and beta dressed up as alpha. Every rejection was for a
+defensible, deterministic reason. Tests: `agent_loop/tests/` (17+ passing).
+
+**Deliberately left as future work (not blockers):** leakage-safe purged/embargoed CV (0001 §7 v1); the
+program-driven fallback for unattended scale (§7); and the actual research goal — *finding a factor that
+beats the momentum floor* — for which the infrastructure is now honest and ready.
 
 ---
 

@@ -97,7 +97,7 @@ task:
         - class: SigAnaRecord
           module_path: qlib.workflow.record_temp
           kwargs:
-            ana_long_short: False
+            ana_long_short: True    # emits dollar-neutral "Long-Short Ann Sharpe" = pure alpha (beta-free)
             ann_scaler: 252
         - class: PortAnaRecord
           module_path: qlib.workflow.record_temp

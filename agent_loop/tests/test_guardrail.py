@@ -141,6 +141,26 @@ def test_no_baselines_skips_gate(tmp_path: Path):
     assert res["gates"]["beats_baselines"] is True  # not evaluated -> does not block
 
 
+def test_market_neutral_alpha_gate(tmp_path: Path):
+    """When the holdout run carries a long-short Sharpe, a non-positive value (no beta-free alpha) rejects;
+    a positive one passes. Absent metric => gate skipped."""
+    cand = _make_run(tmp_path, "cand", sr_ann=2.6)
+
+    def hold_with_ls(name, ls):
+        p = tmp_path / f"{name}.json"
+        p.write_text(json.dumps({"workspace": str(tmp_path), "conf": "x", "metrics": {
+            "1day.excess_return_with_cost.information_ratio": 1.0, "Rank IC": 0.05, "Long-Short Ann Sharpe": ls}}))
+        return str(p)
+
+    neg = guardrail.evaluate(candidate=cand, holdout=hold_with_ls("neg", -0.2), min_holdout=0.0)
+    assert neg["gates"]["neutral_alpha_ok"] is False and neg["decision"] is False
+    pos = guardrail.evaluate(candidate=cand, holdout=hold_with_ls("pos", 0.8), min_holdout=0.0)
+    assert pos["gates"]["neutral_alpha_ok"] is True
+
+    plain = guardrail.evaluate(candidate=cand, holdout=_make_run(tmp_path, "h", 0.0, holdout_rank_ic=0.05), min_holdout=0.0)
+    assert plain["gates"]["neutral_alpha_ok"] is True  # absent -> skipped, not blocking
+
+
 def test_missing_holdout_cannot_promote(tmp_path: Path):
     cand = _make_run(tmp_path, "cand", sr_ann=2.2)
     res = guardrail.evaluate(candidate=cand)  # no holdout

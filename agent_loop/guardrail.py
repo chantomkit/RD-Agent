@@ -19,6 +19,9 @@ A candidate is promoted to SOTA only if ALL gates pass:
                        of a fixed panel of trivial strategies {buy_hold, eqw_1n, momentum, random_p95}
                        (from agent_loop.baselines). Ensures a discovery beats naive strategies, not just
                        the previous champion — a fair, absolute bar. Skipped if no panel is given.
+  6. neutral_alpha_ok — (when the run has ana_long_short=True) its dollar-neutral long-short Sharpe on the
+                       holdout ("Long-Short Ann Sharpe") exceeds neutral_min. This isolates genuine
+                       cross-sectional alpha from market/size beta. Skipped if the metric is absent.
 
 Inputs are the JSON emitted by `agent_loop.run_qlib` (which records the workspace path, so the raw
 daily-return series in `<workspace>/ret.pkl` is available for honest T / skew / kurtosis).
@@ -129,6 +132,7 @@ def _load(obj: str | dict | None) -> dict | None:
 
 
 _NET_IR = "1day.excess_return_with_cost.information_ratio"
+_NEUTRAL = "Long-Short Ann Sharpe"  # qlib ana_long_short: dollar-neutral long-short Sharpe (pure alpha)
 
 
 def _ir_with_cost(res: dict) -> float:
@@ -171,6 +175,7 @@ def evaluate(
     cost_margin: float = 0.0,
     holdout_metric: str = "Rank IC",
     min_holdout: float = 0.0,
+    neutral_min: float = 0.0,
     out: str | None = None,
 ) -> dict[str, Any]:
     """Decide whether `candidate` should replace the current SOTA. Returns a decision dict.
@@ -180,6 +185,8 @@ def evaluate(
     baselines: path to a baselines.json (from agent_loop.baselines) — the trivial-baseline panel the
     candidate must beat on the holdout (buy_hold / eqw_1n / momentum / random_p95). When supplied, adds
     the `beats_baselines` gate so a discovery must beat naive strategies, not just the champion.
+    neutral_min: threshold for the market-neutral gate — the holdout dollar-neutral long-short Sharpe
+    ("Long-Short Ann Sharpe", present when the run used ana_long_short=True) must exceed it (default 0).
     """
     cand = _load(candidate)
     hold = _load(holdout)
@@ -261,7 +268,21 @@ def evaluate(
                 f"{bar_base:+.4f} (bar={base_d.get('bar_set_by')}; panel={ {k: round(v,3) for k,v in base_d['baselines'].items()} })"
             )
 
-    decision = bool(holdout_ok and dsr_ok and net_positive and beats_sota_net and beats_baselines)
+    # gate: genuine cross-sectional alpha, market-neutral. The long-only net IR gates mix alpha with
+    # market/size beta; the dollar-neutral long-short Sharpe (qlib ana_long_short) isolates pure alpha.
+    # Applied only when the metric is present (templates with ana_long_short=True); else skipped.
+    neutral_ok = True  # skipped when the metric is absent (templates without ana_long_short)
+    neutral_sharpe = None
+    if hold and _NEUTRAL in hold.get("metrics", {}):
+        neutral_sharpe = float(hold["metrics"][_NEUTRAL])
+        neutral_ok = neutral_sharpe > neutral_min
+        reasons.append(
+            f"market-neutral alpha (holdout L/S Sharpe): {neutral_sharpe:+.3f} "
+            f"{'>' if neutral_ok else '<='} {neutral_min} (beta-free)"
+        )
+
+    decision = bool(holdout_ok and dsr_ok and net_positive and beats_sota_net
+                    and beats_baselines and neutral_ok)
 
     result = {
         "decision": decision,
@@ -274,6 +295,7 @@ def evaluate(
             "skew": stats["skew"],
             "kurt": stats["kurt"],
             "ir_with_cost": cand_ir_net,
+            "neutral_ls_sharpe": neutral_sharpe,
         },
         "dsr": dsr,
         "gates": {
@@ -282,6 +304,7 @@ def evaluate(
             "net_positive": net_positive,
             "beats_sota_net": beats_sota_net,
             "beats_baselines": beats_baselines,
+            "neutral_alpha_ok": neutral_ok,
         },
         "baselines": (base_d.get("baselines") if base_d else None),
         "reasons": reasons,

@@ -42,6 +42,7 @@ _METRIC_KEYS = [
     "1day.excess_return_with_cost.information_ratio",
     "1day.excess_return_with_cost.annualized_return",
     "1day.excess_return_with_cost.max_drawdown",
+    "Long-Short Ann Sharpe",  # market-neutral (dollar-neutral) alpha, if the run enabled ana_long_short
 ]
 
 
