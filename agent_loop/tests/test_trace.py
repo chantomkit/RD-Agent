@@ -81,6 +81,26 @@ def test_ledger_feeds_guardrail_trial_count_and_sota(tmp_path: Path):
     assert res["decision"] is False
 
 
+def test_seed_validation_panel_is_initial_sota(tmp_path: Path):
+    """The trivial-baseline panel is the initial SOTA floor; a baseline that does NOT beat it is not
+    promoted (no hand-seeded champion). ADR 0002 §5j."""
+    path = str(tmp_path / "trace.json")
+    panel = tmp_path / "panel.json"
+    panel.write_text(json.dumps({"bar": 1.83, "bar_set_by": "momentum",
+                                 "baselines": {"buy_hold": 0.0, "momentum": 1.83}}))
+    trace.init(path)
+    trace.set_baselines(str(panel), path)
+    led = json.loads(Path(path).read_text())
+    assert led["baselines"]["bar"] == 1.83 and led["sota_loop"] is None
+
+    # a baseline whose holdout net IR (1.4) is below the panel (1.83) -> rejected -> still no champion
+    sel = _make_run(tmp_path, "sel", sr_ann=1.0, rank_ic=0.01)
+    hold = _make_run(tmp_path, "hold", sr_ann=1.4, rank_ic=0.01)
+    trace.record(candidate=sel, holdout=hold, decision=_decision(False), hypothesis="baseline", path=path)
+    led = json.loads(Path(path).read_text())
+    assert led["sota_loop"] is None  # the target stays the panel, not a hand-seeded Alpha20
+
+
 def test_show_runs(tmp_path: Path, capsys):
     path = str(tmp_path / "trace.json")
     trace.show(path)  # empty

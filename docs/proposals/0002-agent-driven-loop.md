@@ -318,8 +318,8 @@ buy_hold 0.00   eqw_1n -2.88   momentum +0.785   random_p95 -0.12   =>  BAR = +0
 The candidate's holdout net IR was **−0.53** — i.e. the ML strategy (and the Alpha20 "SOTA" at −0.64)
 **lost to a 21-day momentum rule.** Re-judged with the panel, `beats_baselines=false` — the loop now
 rejects for the *right, fair* reason. Tests: `test_beats_baselines_gate`, `test_no_baselines_skips_gate`
-(suite 15). Also on the roadmap (not yet done): validate the seed champion instead of force-promoting it,
-and add a market-neutral (long-short) evaluation to separate alpha from beta.
+(suite 15). Follow-ups: seed validation — **done, see §5j**; and a market-neutral (long-short) evaluation
+to separate alpha from beta (not yet done).
 
 ## 5i. CN→US infrastructure fixes (system-level, not strategy tuning)
 
@@ -350,6 +350,34 @@ The earlier "worse than trivial" US result was **mostly the CN mismatch, not abs
 right universe + cost model the baseline reaches **net IR +0.75 OOS — at the momentum bar (0.785)**. This
 is the highest-leverage change in the session and validates fixing infrastructure before tuning strategy.
 (Next: re-run the full loop + recompute the baseline panel on the 500-name universe.)
+
+## 5j. Seed validation — the baseline panel is the initial SOTA
+
+**Problem (§5h roadmap item):** the loop *hand-seeded* the Alpha20 baseline as SOTA with a forced
+`decision=True` — it never passed a gate. So "SOTA" could be an arbitrary strategy that doesn't even beat
+momentum, and `trace show` misleadingly labelled it the champion.
+
+**Fix:** the **trivial-baseline panel is the initial SOTA floor**; the baseline is *validated*, not seeded.
+
+- `trace.set_baselines(panel, ledger)` records the panel as the ledger's `baselines` floor (the bar to
+  beat). `trace show` prints it and states whether any trial has beaten it.
+- The seed step now runs the Alpha20 baseline through the guardrail (against the panel) like any
+  candidate and records the **real** decision. It becomes SOTA only if it beats the panel; otherwise
+  `sota_loop` stays `null` and the target remains the panel.
+
+**On the real US S&P500 ledger** this cleans the story up exactly as intended:
+
+```
+loop verdict sel RankIC hold RankIC hold netIR   DSR  hypothesis
+   0 reject     0.0085     0.0096     +1.446   0.779  US S&P500 Alpha20 baseline
+   1 reject     0.0103     0.0233     +1.534   0.769  US: add MOM12_1 + VOL60 to Alpha20
+SOTA floor (trivial baselines): +1.8257 (momentum) — beat this to become SOTA
+champion: none — nothing beats the floor yet; the target is the floor
+```
+
+The Alpha20 baseline (holdout net IR 1.45) is no longer a fake champion — it's rejected like everything
+else because it doesn't beat momentum (1.83). Every future verdict is now measured against an honest,
+non-arbitrary bar. Tests: `test_seed_validation_panel_is_initial_sota`; suite 16.
 
 ## 6. What dissolves vs 0001
 

@@ -12,7 +12,11 @@ loop). The schema is the same one `agent_loop.guardrail` already reads, so recor
 Ledger shape:
     {"trials": [ {loop, action, hypothesis, decision, sr_period, sr_ann,
                   selection_metrics, holdout_metrics, guardrail, ...} ],
-     "sota_loop": int | null}
+     "sota_loop": int | null,
+     "baselines": {bar, bar_set_by, panel} | absent}   # the SOTA floor (trivial panel); set_baselines()
+
+The `baselines` panel is the *initial* SOTA floor: a strategy is SOTA only if it beats it (no
+hand-seeded champion). See ADR 0002 §5j.
 
 No LLM. Deterministic.
 """
@@ -72,6 +76,21 @@ def init(path: str = DEFAULT_PATH) -> str:
     _save_ledger(path, {"trials": [], "sota_loop": None})
     print(f"[trace] initialized empty ledger: {path}")
     return path
+
+
+NET_IR = "1day.excess_return_with_cost.information_ratio"
+
+
+def set_baselines(baselines: str, path: str = DEFAULT_PATH) -> dict[str, Any]:
+    """Record the trivial-baseline panel as the ledger's SOTA floor — the bar every trial must beat to
+    become SOTA. This replaces hand-seeding an arbitrary champion: the *initial* SOTA is the panel
+    (e.g. momentum), and a strategy is SOTA only if it beats it (ADR 0002 §5j)."""
+    b = _load(baselines)
+    ledger = _load_ledger(path)
+    ledger["baselines"] = {"bar": b["bar"], "bar_set_by": b.get("bar_set_by"), "panel": b.get("baselines")}
+    _save_ledger(path, ledger)
+    print(f"[trace] SOTA floor set from baseline panel: {b['bar']:+.4f} ({b.get('bar_set_by')})")
+    return ledger["baselines"]
 
 
 def record(
@@ -134,32 +153,44 @@ def show(path: str = DEFAULT_PATH) -> dict[str, Any]:
         print("(empty)")
         return ledger
 
-    hdr = f"{'loop':>4} {'action':>6} {'verdict':>8} {'sel RankIC':>10} {'hold RankIC':>11} {'gap':>7} {'DSR':>6}  hypothesis"
+    hdr = (f"{'loop':>4} {'action':>6} {'verdict':>8} {'sel RankIC':>10} {'hold RankIC':>11} "
+           f"{'hold netIR':>10} {'DSR':>6}  hypothesis")
     print(hdr)
     print("-" * len(hdr))
     gaps = []
     for t in trials:
         sel = (t.get("selection_metrics") or {}).get("Rank IC")
         hol = (t.get("holdout_metrics") or {}).get("Rank IC")
-        gap = (sel - hol) if (sel is not None and hol is not None) else None
-        if gap is not None:
-            gaps.append(gap)
+        hnir = (t.get("holdout_metrics") or {}).get(NET_IR)
+        if sel is not None and hol is not None:
+            gaps.append(sel - hol)
         dsr = (t.get("guardrail") or {}).get("dsr")
         verdict = "SOTA" if t["loop"] == sota else ("promote" if t["decision"] else "reject")
         print(
             f"{t['loop']:>4} {t['action']:>6} {verdict:>8} "
             f"{('%.4f' % sel) if sel is not None else '   n/a':>10} "
             f"{('%.4f' % hol) if hol is not None else '    n/a':>11} "
-            f"{('%+.4f' % gap) if gap is not None else '   n/a':>7} "
+            f"{('%+.3f' % hnir) if hnir is not None else '   n/a':>10} "
             f"{('%.3f' % dsr) if dsr is not None else ' n/a':>6}  "
-            f"{(t.get('hypothesis') or '')[:48]}"
+            f"{(t.get('hypothesis') or '')[:44]}"
         )
     if gaps:
         avg = sum(gaps) / len(gaps)
         print(f"\nmean selection-vs-holdout Rank IC gap: {avg:+.4f} "
               f"({'watch for overfitting drift' if avg > 0.01 else 'ok'})")
+
+    # SOTA floor = the trivial-baseline panel; a strategy is SOTA only if it beats it.
+    base = ledger.get("baselines")
+    if base:
+        bar = base["bar"]
+        print(f"\nSOTA floor (trivial baselines): {bar:+.4f} ({base.get('bar_set_by')}) — beat this to become SOTA")
+        champ = next(((t.get("holdout_metrics") or {}).get(NET_IR) for t in trials if t["loop"] == sota), None)
+        if champ is not None:
+            print(f"champion: loop {sota}, holdout net IR {champ:+.3f} ({'beats' if champ > bar else 'below'} floor)")
+        else:
+            print("champion: none — nothing beats the floor yet; the target is the floor")
     return ledger
 
 
 if __name__ == "__main__":
-    fire.Fire({"init": init, "record": record, "show": show})
+    fire.Fire({"init": init, "set_baselines": set_baselines, "record": record, "show": show})

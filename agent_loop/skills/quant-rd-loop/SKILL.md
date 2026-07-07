@@ -37,8 +37,10 @@ $PY -m agent_loop.trace show --path $LEDGER      # trials, SOTA, selection-vs-ho
 ```
 If the ledger does not exist or is empty, **seed the baseline first** (step S). Otherwise go to step 1.
 
-### S. Seed the incumbent (only when the ledger is empty)
-Run the Alpha20 baseline on both segments and record it as loop 0 / SOTA:
+### S. Seed (only when the ledger is empty) — the PANEL is the initial SOTA; the baseline is VALIDATED
+The Alpha20 baseline is **not** auto-promoted (ADR 0002 §5j). The trivial-baseline panel (momentum etc.)
+is the initial SOTA floor; the baseline is judged like any candidate and becomes SOTA only if it beats
+the panel. Compute the panel (step 2b) first, set it as the floor, then judge + record the baseline:
 ```bash
 N=0; RUN=$REPO/git_ignore_folder/agent_loop/runs/loop_$N; mkdir -p $RUN
 $PY -m agent_loop.run_qlib --conf conf_baseline.yaml --train_start 2015-01-01 --train_end 2016-12-31 \
@@ -47,10 +49,13 @@ $PY -m agent_loop.run_qlib --conf conf_baseline.yaml --train_start 2015-01-01 --
 $PY -m agent_loop.run_qlib --conf conf_baseline.yaml --train_start 2015-01-01 --train_end 2016-12-31 \
     --valid_start 2017-01-01 --valid_end 2017-12-31 --test_start 2019-01-01 --test_end 2019-12-31 \
     --out $RUN/hold.json                                                  # LOCKED holdout
+# compute $BASELINES once (see step 2b), then:
 $PY -m agent_loop.trace init --path $LEDGER
+$PY -m agent_loop.trace set_baselines --baselines $BASELINES --path $LEDGER   # panel = initial SOTA floor
+$PY -m agent_loop.guardrail --candidate $RUN/sel.json --holdout $RUN/hold.json \
+    --trace $LEDGER --baselines $BASELINES --out $RUN/decision.json
 $PY -c "from agent_loop import trace; trace.record(candidate='$RUN/sel.json', holdout='$RUN/hold.json', \
-    decision={'decision':True,'dsr':{'value':float('nan')},'gates':{'seed':True}}, \
-    hypothesis='Alpha20 base handler (seed SOTA)', action='factor', path='$LEDGER')"
+    decision='$RUN/decision.json', hypothesis='Alpha20 base handler', action='factor', path='$LEDGER')"
 ```
 
 ### 1. Propose (this is your job — reason in the open)
