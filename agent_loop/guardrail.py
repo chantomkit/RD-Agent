@@ -15,6 +15,10 @@ A candidate is promoted to SOTA only if ALL gates pass:
                        so marginal "winners" found by searching get rejected.
   3. net_positive    — its net-of-cost information ratio is positive (reject pure gross winners).
   4. beats_sota_net  — its net-of-cost IR beats the incumbent's by a margin.
+  5. beats_baselines — (when a --baselines panel is supplied) its HOLDOUT net-of-cost IR beats the max
+                       of a fixed panel of trivial strategies {buy_hold, eqw_1n, momentum, random_p95}
+                       (from agent_loop.baselines). Ensures a discovery beats naive strategies, not just
+                       the previous champion — a fair, absolute bar. Skipped if no panel is given.
 
 Inputs are the JSON emitted by `agent_loop.run_qlib` (which records the workspace path, so the raw
 daily-return series in `<workspace>/ret.pkl` is available for honest T / skew / kurtosis).
@@ -162,6 +166,7 @@ def evaluate(
     holdout: str | None = None,
     trace: str | None = None,
     sota: str | None = None,
+    baselines: str | None = None,
     dsr_threshold: float = 0.95,
     cost_margin: float = 0.0,
     holdout_metric: str = "Rank IC",
@@ -172,6 +177,9 @@ def evaluate(
 
     candidate/holdout/sota: paths to run_qlib JSON (selection segment, locked-holdout segment, and
     the incumbent's selection JSON, respectively). trace: path to the trace ledger JSON.
+    baselines: path to a baselines.json (from agent_loop.baselines) — the trivial-baseline panel the
+    candidate must beat on the holdout (buy_hold / eqw_1n / momentum / random_p95). When supplied, adds
+    the `beats_baselines` gate so a discovery must beat naive strategies, not just the champion.
     """
     cand = _load(candidate)
     hold = _load(holdout)
@@ -236,7 +244,24 @@ def evaluate(
             f"{bar:+.4f} ({'SOTA holdout' if sota_h is not None else 'floor'})"
         )
 
-    decision = bool(holdout_ok and dsr_ok and net_positive and beats_sota_net)
+    # gate: beats the trivial-baseline panel on the HOLDOUT (fair-comparison gate). The candidate's
+    # out-of-sample net IR must exceed the max of {buy_hold, eqw_1n, momentum, random_p95}.
+    base_d = _load(baselines)
+    beats_baselines = True  # skipped (not evaluated) when no panel is supplied
+    if base_d is not None:
+        bar_base = float(base_d["bar"])
+        cand_hold_ir = _net_ir_of(hold) if hold else None
+        if cand_hold_ir is None:
+            beats_baselines = False
+            reasons.append("baseline panel supplied but candidate holdout net IR missing -> fail")
+        else:
+            beats_baselines = cand_hold_ir > bar_base
+            reasons.append(
+                f"beats baselines (holdout net IR): {cand_hold_ir:+.4f} {'>' if beats_baselines else '<='} "
+                f"{bar_base:+.4f} (bar={base_d.get('bar_set_by')}; panel={ {k: round(v,3) for k,v in base_d['baselines'].items()} })"
+            )
+
+    decision = bool(holdout_ok and dsr_ok and net_positive and beats_sota_net and beats_baselines)
 
     result = {
         "decision": decision,
@@ -256,7 +281,9 @@ def evaluate(
             "dsr_ok": dsr_ok,
             "net_positive": net_positive,
             "beats_sota_net": beats_sota_net,
+            "beats_baselines": beats_baselines,
         },
+        "baselines": (base_d.get("baselines") if base_d else None),
         "reasons": reasons,
     }
 

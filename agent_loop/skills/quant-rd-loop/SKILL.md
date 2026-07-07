@@ -86,13 +86,25 @@ $PY -m agent_loop.run_qlib --conf conf_baseline.yaml --features $RUN/features.js
 ```
 Launch these as background jobs and do other work while they run (ADR 0002 §9). Do not block idle.
 
+### 2b. Baseline panel — compute ONCE per (dataset, holdout), then reuse
+The candidate must beat trivial strategies, not just the champion. Compute the panel on the LOCKED
+holdout (in-process qlib, no Docker; run in the `qlib` env). Cache it and reuse across iterations:
+```bash
+BASELINES=$REPO/git_ignore_folder/agent_loop/baselines.json
+[ -f "$BASELINES" ] || ~/anaconda3/envs/qlib/bin/python -m agent_loop.baselines \
+    --provider cn_data --region cn --market csi300 --benchmark SH000300 \
+    --start <holdout_start> --end <holdout_end> --out $BASELINES     # (US: --provider us_data --region us --market universe --benchmark SPX)
+```
+
 ### 3. Judge — the deterministic gate (no LLM)
 ```bash
 $PY -m agent_loop.guardrail --candidate $RUN/sel.json --holdout $RUN/hold.json \
-    --trace $LEDGER --out $RUN/decision.json
+    --trace $LEDGER --baselines $BASELINES --out $RUN/decision.json
 ```
-The trace supplies the real trial count `N`, the SOTA holdout, and the SOTA net IR. PROMOTE requires
-ALL of: holdout beats SOTA, Deflated Sharpe ≥ threshold, net-of-cost IR > 0, and it beats SOTA net.
+The trace supplies the real trial count `N`, the SOTA holdout, and the SOTA net IR; the panel supplies
+the fair bar. PROMOTE requires ALL of: holdout beats SOTA, Deflated Sharpe ≥ threshold, net-of-cost
+IR > 0, beats SOTA net, **and beats the trivial-baseline panel** (buy_hold / eqw_1n / momentum /
+random_p95) on the holdout.
 
 ### 4. Record
 ```bash

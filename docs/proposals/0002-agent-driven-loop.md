@@ -290,6 +290,37 @@ steps (broader universe, US-appropriate features, lower turnover), which is exac
 final rebalance), and the knowledge substrate is still cn-extracted (regenerate `build.py` against
 `us_data` for field-sensitive US factors).
 
+## 5h. Fair comparison — the baseline-panel gate
+
+**Problem (raised in review):** the SOTA gate is a dynamic champion (updated on each promotion), but the
+*seed* champion was hand-promoted and a candidate only had to beat the previous champion + the index
+zero-line — never a panel of trivial strategies. A discovery could "beat SOTA" while being worse than
+a one-line rule.
+
+**Fix:** `agent_loop/baselines.py` computes a fixed panel on the LOCKED holdout, each simulated through
+the **same** TopkDropout strategy + cost model as the candidate (only the signal differs), **in-process
+via qlib's backtest API — no Docker, ~1 s each**:
+
+- `buy_hold` — hold the benchmark index (excess IR = 0 by construction: "beat the market?").
+- `eqw_1n` — equal-weight the whole universe (topk=N, n_drop=0, constant signal).
+- `momentum` — trailing-return signal through the candidate's exact strategy.
+- `random_p95` — 95th percentile of IR over many random-signal runs ("better than luck?").
+
+The guardrail gains a 5th gate, `beats_baselines`: the candidate's **holdout net-of-cost IR** must
+exceed `max(panel)`. Compute the panel once per (dataset, holdout) and reuse.
+
+**This immediately exposed the US result as worse than trivial.** On the 2025–2026 holdout the panel was:
+
+```
+buy_hold 0.00   eqw_1n -2.88   momentum +0.785   random_p95 -0.12   =>  BAR = +0.785 (momentum)
+```
+
+The candidate's holdout net IR was **−0.53** — i.e. the ML strategy (and the Alpha20 "SOTA" at −0.64)
+**lost to a 21-day momentum rule.** Re-judged with the panel, `beats_baselines=false` — the loop now
+rejects for the *right, fair* reason. Tests: `test_beats_baselines_gate`, `test_no_baselines_skips_gate`
+(suite 15). Also on the roadmap (not yet done): validate the seed champion instead of force-promoting it,
+and add a market-neutral (long-short) evaluation to separate alpha from beta.
+
 ## 6. What dissolves vs 0001
 
 - **Embeddings / RAG (0001 §8, §10 open item): gone.** RAG existed to feed a *remote* LLM past

@@ -118,6 +118,29 @@ def test_beats_sota_net_reads_from_trace_trial(tmp_path: Path):
     assert res["gates"]["beats_sota_net"] is False  # 1.0 < SOTA-trial net IR 2.0
 
 
+def test_beats_baselines_gate(tmp_path: Path):
+    """A candidate must beat the trivial-baseline panel on the holdout; below the bar => reject."""
+    cand = _make_run(tmp_path, "cand", sr_ann=2.6)                     # strong selection (DSR/net pass)
+    base = tmp_path / "base.json"
+    base.write_text(json.dumps({"bar": 0.5, "bar_set_by": "momentum",
+                                "baselines": {"buy_hold": 0.0, "momentum": 0.5, "random_p95": -0.1}}))
+
+    hold_lo = _make_run(tmp_path, "hlo", sr_ann=0.3, holdout_rank_ic=0.05)     # holdout net IR 0.3 < bar 0.5
+    lo = guardrail.evaluate(candidate=cand, holdout=hold_lo, baselines=str(base), min_holdout=0.0)
+    assert lo["gates"]["beats_baselines"] is False and lo["decision"] is False
+
+    hold_hi = _make_run(tmp_path, "hhi", sr_ann=0.8, holdout_rank_ic=0.05)     # holdout net IR 0.8 > bar 0.5
+    hi = guardrail.evaluate(candidate=cand, holdout=hold_hi, baselines=str(base), min_holdout=0.0)
+    assert hi["gates"]["beats_baselines"] is True and hi["decision"] is True
+
+
+def test_no_baselines_skips_gate(tmp_path: Path):
+    cand = _make_run(tmp_path, "cand", sr_ann=2.6)
+    hold = _make_run(tmp_path, "hold", sr_ann=0.0, holdout_rank_ic=0.05)
+    res = guardrail.evaluate(candidate=cand, holdout=hold, min_holdout=0.0)  # no --baselines
+    assert res["gates"]["beats_baselines"] is True  # not evaluated -> does not block
+
+
 def test_missing_holdout_cannot_promote(tmp_path: Path):
     cand = _make_run(tmp_path, "cand", sr_ann=2.2)
     res = guardrail.evaluate(candidate=cand)  # no holdout
