@@ -72,6 +72,44 @@ def _verdict_badge(rep: R.Report):
 # --------------------------------------------------------------------------------------------------
 # panels
 # --------------------------------------------------------------------------------------------------
+def setup_panel(rep: R.Report):
+    su = R.backtest_setup(rep)
+    cfg = su["config"]
+    st.subheader("Backtest setup")
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.markdown("**Data & model**")
+        st.markdown(
+            f"- Universe: `{cfg.get('market', '?')}` ({rep.project.upper()})\n"
+            f"- Data region: `{cfg.get('region', '?')}`\n"
+            f"- Model: {cfg.get('model', '?')}\n"
+            f"- Feature base: {cfg.get('handler', '?')}")
+    with c2:
+        st.markdown("**Benchmark**")
+        st.markdown(f"- `{cfg.get('benchmark', '?')}` — {cfg.get('benchmark_name', '?')}")
+        st.caption("Every 'excess return' and Information Ratio number is measured **against this market "
+                   "index**. Holding the index *is* the `buy_hold` baseline below — it is **not** a "
+                   "buy-and-hold of the strategy.")
+    with c3:
+        st.markdown("**Strategy & cost**")
+        st.markdown(
+            f"- {cfg.get('strategy', '?')}: hold top {cfg.get('topk', '?')}, drop "
+            f"{cfg.get('n_drop', '?')}/day, min-hold {cfg.get('hold_thresh', '?')}d\n"
+            f"- Cost per side: open {cfg.get('open_cost', '?')}, close {cfg.get('close_cost', '?')}\n"
+            f"- Deal price: {cfg.get('deal_price', '?')}")
+    seg = su["segments"]
+    st.markdown(
+        f"**Date segments** — Train `{seg.get('train', '?')}` · Valid `{seg.get('valid', '?')}` · "
+        f"**Selection (test)** `{seg.get('selection_test', '?')}` · "
+        f"**Locked holdout (test)** `{seg.get('holdout_test', '?')}`")
+    feats = su.get("features")
+    line = f"qlib config: `{su.get('conf', '?')}`"
+    if feats:
+        shown = ", ".join(feats[:8]) + (" …" if len(feats) > 8 else "")
+        line += f"  ·  Features ({len(feats)}): {shown}"
+    st.caption(line)
+
+
 def gate_panel(rep: R.Report):
     st.subheader("Gate decision")
     if not rep.gates:
@@ -175,17 +213,21 @@ def figures_for(label: str, workspace: str | None):
         _plotly(R.quantile_return_figure(pred, lab), key=f"quant_{label}")
         _plotly(R.turnover_figure(art["equity"]), key=f"to_{label}")
 
-    # Tier-2 — real positions + price with entry/exit marks
+    # Tier-2 — real positions + price with entry/exit marks (this run's own test window)
     if art["positions"] is not None and art["prices"] is not None:
         st.markdown("**Price with strategy entry/exit — pick a holding**")
+        dts = pd.to_datetime(art["prices"]["datetime"])
+        st.caption(f"Trades over the **{label}** window ({dts.min():%Y-%m-%d} → {dts.max():%Y-%m-%d}); "
+                   "each tab shows the entries/exits for its own segment.")
         tickers = R.held_tickers(art["positions"])
         if tickers:
             tk = st.selectbox("Ticker", tickers, key=f"ticker_{label}")
             _plotly(R.price_with_trades_figure(art["positions"], art["prices"], tk),
                     key=f"price_{label}")
     else:
-        st.caption("Per-ticker price + entry/exit plot needs Tier-2 `positions.parquet`/`prices.parquet` "
-                   "(emitted by the US template's extraction step). Not present for this run.")
+        st.caption(f"Per-ticker price + entry/exit for the **{label}** segment needs Tier-2 "
+                   "`positions.parquet`/`prices.parquet` (emitted per-run by the US template's extraction "
+                   "step). Not present for this run.")
 
     with st.expander("Detailed qlib standard report (all series — dense)"):
         _plotly(R.qlib_standard_report_figure(art["equity"]), key=f"qlib_{label}")
@@ -215,6 +257,8 @@ def loop_view(rep: R.Report):
             _verdict_badge(rep)
     st.divider()
 
+    setup_panel(rep)
+    st.divider()
     gate_panel(rep)
     st.divider()
     comparison_table(rep)

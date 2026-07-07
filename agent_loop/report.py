@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import glob
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -139,6 +140,8 @@ class Report:
     holdout_workspace: str | None = None
     report_md: str | None = None
     run_dir: str | None = None
+    conf: str | None = None          # qlib config file used (e.g. conf_baseline.yaml)
+    settings: dict = field(default_factory=dict)  # explicit run_qlib knobs (topk/costs/…), if recorded
 
     @property
     def report_id(self) -> str:
@@ -216,7 +219,92 @@ def load_report(ledger_path: str | Path, loop: int, ledger: dict | None = None) 
         holdout_workspace=hold.get("workspace"),
         report_md=report_md,
         run_dir=str(rundir),
+        conf=sel.get("conf") or hold.get("conf"),
+        settings=sel.get("settings") or {},
     )
+
+
+# --------------------------------------------------------------------------------------------------
+# Backtest setup (metadata) — parsed from the run's qlib config so the UI can show the whole setup
+# --------------------------------------------------------------------------------------------------
+BENCHMARK_NAMES = {
+    "SPX": "S&P 500 index (cap-weighted)",
+    "SH000300": "CSI 300 index",
+    "SH000905": "CSI 500 index",
+    "SH000016": "SSE 50 index",
+}
+
+
+def _conf_val(text: str, key: str) -> str | None:
+    """Read a scalar from a qlib config, handling `key: &anchor VALUE`, `key: VALUE`, and the jinja
+    `key: {{ key | default(VALUE, true) }}` forms (US templates use jinja; CN uses concrete values)."""
+    m = re.search(rf"^\s*{re.escape(key)}:\s*\{{\{{[^}}]*?default\(\s*([^,)\s]+)", text, re.M)
+    if m:
+        return m.group(1)
+    m = re.search(rf"^\s*{re.escape(key)}:\s*(?:&\S+\s+)?([^\s#]+)", text, re.M)
+    return m.group(1) if m else None
+
+
+def _parse_conf(text: str | None) -> dict[str, Any]:
+    if not text:
+        return {}
+    model_m = re.search(r"class:\s*(\w*Model)\b", text)
+    out = {
+        "market": _conf_val(text, "market"),
+        "benchmark": _conf_val(text, "benchmark"),
+        "region": _conf_val(text, "region"),
+        "topk": _conf_val(text, "topk"),
+        "n_drop": _conf_val(text, "n_drop"),
+        "hold_thresh": _conf_val(text, "hold_thresh"),
+        "open_cost": _conf_val(text, "open_cost"),
+        "close_cost": _conf_val(text, "close_cost"),
+        "deal_price": _conf_val(text, "deal_price"),
+        "handler": "Alpha360" if "Alpha360" in text else ("Alpha158" if "Alpha158" in text else None),
+        "model": ("LightGBM (LGBModel)" if "LGBModel" in text else (model_m.group(1) if model_m else None)),
+        "strategy": "TopkDropout" if "TopkDropout" in text else None,
+    }
+    return {k: v for k, v in out.items() if v is not None}
+
+
+def _seg_str(seg: dict | None, kind: str) -> str | None:
+    seg = seg or {}
+    a, b = seg.get(f"{kind}_start"), seg.get(f"{kind}_end")
+    return f"{a} → {b}" if a and b else None
+
+
+def backtest_setup(rep: "Report") -> dict[str, Any]:
+    """Assemble the backtest setup shown at the top of a report: parsed qlib config (universe, benchmark,
+    strategy, cost, model), the date segments, and any added features. Explicit run_qlib knobs override
+    the config defaults; missing pieces are simply omitted."""
+    conf_text = None
+    if rep.selection_workspace and rep.conf:
+        p = Path(rep.selection_workspace) / rep.conf
+        if p.exists():
+            conf_text = p.read_text()
+    cfg = _parse_conf(conf_text)
+    for k in ("topk", "n_drop", "hold_thresh", "open_cost", "close_cost"):
+        if rep.settings.get(k) is not None:
+            cfg[k] = rep.settings[k]
+    cfg["benchmark_name"] = BENCHMARK_NAMES.get(cfg.get("benchmark"), cfg.get("benchmark"))
+
+    feats = None
+    if rep.run_dir and (Path(rep.run_dir) / "features.json").exists():
+        try:
+            feats = list(json.loads((Path(rep.run_dir) / "features.json").read_text()).keys())
+        except (json.JSONDecodeError, OSError):
+            feats = None
+
+    return {
+        "conf": rep.conf,
+        "config": cfg,
+        "features": feats,
+        "segments": {
+            "train": _seg_str(rep.selection_segment, "train"),
+            "valid": _seg_str(rep.selection_segment, "valid"),
+            "selection_test": _seg_str(rep.selection_segment, "test"),
+            "holdout_test": _seg_str(rep.holdout_segment, "test"),
+        },
+    }
 
 
 def load_all(ledger_path: str | Path) -> list[Report]:

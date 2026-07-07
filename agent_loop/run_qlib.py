@@ -159,6 +159,17 @@ def run(
     for k in sorted(metrics):
         print(f"{k:52s} {metrics[k]:+.6f}")
 
+    # Explicit strategy/cost knobs actually passed (None = template default). Lets the report UI show the
+    # exact setup even when a run overrides the config defaults (ADR 0003).
+    settings = {
+        k: v for k, v in {
+            "template": template, "topk": topk, "n_drop": n_drop, "hold_thresh": hold_thresh,
+            "open_cost": open_cost, "close_cost": close_cost,
+        }.items() if v is not None
+    }
+    settings["n_features"] = len(feats)
+    settings["custom_factors"] = factors is not None
+
     payload = {
         "workspace": str(ws.workspace_path),
         "conf": conf,
@@ -167,6 +178,7 @@ def run(
             for k in ("train_start", "train_end", "valid_start", "valid_end", "test_start", "test_end")
         },
         "metrics": metrics,
+        "settings": settings,
     }
     if out is not None:
         Path(out).write_text(json.dumps(payload, indent=2))

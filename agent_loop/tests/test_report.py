@@ -60,12 +60,32 @@ def _make_workspace(root: Path, name: str, rank_ic: float = 0.10) -> Path:
     return ws
 
 
+# A qlib config exercising both the jinja (US) and concrete parse paths.
+_CONF = """
+    provider_uri: "~/.qlib/qlib_data/us_data"
+    region: us
+market: &market universe
+benchmark: &benchmark SPX
+                - class: qlib.contrib.data.loader.Alpha158DL
+            class: TopkDropoutStrategy
+            topk: {{ topk | default(30, true) }}
+            n_drop: {{ n_drop | default(3, true) }}
+            open_cost: {{ open_cost | default(0.0005, true) }}
+            close_cost: {{ close_cost | default(0.0005, true) }}
+            deal_price: close
+        class: LGBModel
+"""
+
+
 def _make_loop(root: Path, ledger_path: Path, loop: int, promote: bool, *, write_run: bool = True,
                write_md: bool = True, parent: int | None = None) -> dict:
     """Append a trial to the ledger and (optionally) drop its run dir + report.md by convention."""
     ws_sel = _make_workspace(root, f"sel{loop}")
     ws_hold = _make_workspace(root, f"hold{loop}")
-    seg_sel = {"test_start": "2024-01-01", "test_end": "2024-12-31"}
+    (ws_sel / "conf_test.yaml").write_text(_CONF)
+    seg_sel = {"train_start": "2015-01-01", "train_end": "2021-12-31",
+               "valid_start": "2022-01-01", "valid_end": "2023-12-31",
+               "test_start": "2024-01-01", "test_end": "2024-12-31"}
     seg_hold = {"test_start": "2025-01-01", "test_end": "2026-06-01"}
     sel_metrics = {"Rank IC": 0.011, "IC": 0.015, "1day.excess_return_with_cost.information_ratio": 1.2}
     hold_metrics = {"Rank IC": 0.023, "IC": 0.025, "1day.excess_return_with_cost.information_ratio": 1.5,
@@ -96,6 +116,7 @@ def _make_loop(root: Path, ledger_path: Path, loop: int, promote: bool, *, write
         rundir = R.run_dir_for(ledger_path, loop, trial)
         rundir.mkdir(parents=True, exist_ok=True)
         (rundir / "sel.json").write_text(json.dumps({"workspace": str(ws_sel), "segments": seg_sel,
+                                                     "conf": "conf_test.yaml", "settings": {"topk": 25},
                                                      "metrics": {**sel_metrics, "ICIR": 0.12}}))
         (rundir / "hold.json").write_text(json.dumps({"workspace": str(ws_hold), "segments": seg_hold,
                                                       "metrics": {**hold_metrics, "ICIR": 0.18}}))
@@ -221,6 +242,30 @@ def test_figure_builders_return_figures_and_degrade(tmp_path: Path):
     # graceful on missing inputs
     assert isinstance(R.ic_timeseries_figure(None, None), go.Figure)
     assert isinstance(R.cumulative_return_figure(None), go.Figure)
+
+
+def test_parse_conf_handles_jinja_and_concrete():
+    assert R._parse_conf(None) == {}
+    us = R._parse_conf(_CONF)
+    assert us["market"] == "universe" and us["benchmark"] == "SPX" and us["region"] == "us"
+    assert us["topk"] == "30" and us["open_cost"] == "0.0005"  # jinja defaults
+    assert us["handler"] == "Alpha158" and "LGBModel" in us["model"] and us["strategy"] == "TopkDropout"
+    cn = R._parse_conf("region: cn\nmarket: &market csi300\nbenchmark: &benchmark SH000300\n"
+                       "topk: 50\nclose_cost: 0.0015\n")
+    assert cn["market"] == "csi300" and cn["benchmark"] == "SH000300"
+    assert cn["topk"] == "50" and cn["close_cost"] == "0.0015"  # concrete values
+
+
+def test_backtest_setup_config_segments_and_override(tmp_path: Path):
+    ledger = tmp_path / "trace_us.json"
+    _make_loop(tmp_path, ledger, 0, promote=False)
+    su = R.backtest_setup(R.load_report(ledger, 0))
+    cfg = su["config"]
+    assert cfg["benchmark"] == "SPX" and cfg["benchmark_name"].startswith("S&P 500")
+    assert cfg["n_drop"] == "3"          # from the config's jinja default
+    assert cfg["topk"] == 25             # explicit run setting overrides the config default (30)
+    assert su["segments"]["train"] and su["segments"]["selection_test"] and su["segments"]["holdout_test"]
+    assert su["features"] is None        # no features.json written in this fixture
 
 
 def test_segment_returns_excess_identity(tmp_path: Path):
