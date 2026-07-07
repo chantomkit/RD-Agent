@@ -56,6 +56,11 @@ $PY -c "from agent_loop import trace; trace.record(candidate='$RUN/sel.json', ho
 ### 1. Propose (this is your job — reason in the open)
 - Read `trace show`: what has been tried, where the selection-vs-holdout gaps are widening (overfitting),
   what the SOTA is. Pick `action` = `factor` or `model`.
+- **Read the capability substrate `agent_loop/knowledge/` before authoring** (ADR 0002 §5f):
+  `operators.md` (the 45 real expression operators + signatures), `fields.md` (the only valid `$fields`
+  — heed the absent-field caveat: **this dataset has no `$vwap`**), `handlers.md` (Alpha158/360 base
+  catalogs — extend, don't duplicate), `metrics.md`, `models.md`. Author expressions **only** from
+  documented operators and fields; never invent a field or operator.
 - Write a one-line **hypothesis** and author the change **without touching holdout data**:
   - **Factor via qlib expression (default, simplest):** build a features JSON = Alpha20 + your new
     expression(s). Example:

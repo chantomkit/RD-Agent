@@ -41,10 +41,11 @@ becomes the goal, 0001's program-driven path is the fallback (point LiteLLM at C
   metrics back, with **no `.env` and no LLM call in the path**. See §4.
 - The tools exist: **`agent_loop/run_qlib.py`** (execute), **`agent_loop/guardrail.py`** (the
   deterministic promote/reject gate), and **`agent_loop/trace.py`** (the DAG ledger). All LLM-free.
-- **Phases A–E are done.** The guardrail rejects a deliberately overfit factor and applies a real
+- **Phases A–F are done.** The guardrail rejects a deliberately overfit factor and applies a real
   Deflated-Sharpe haircut; the trace ledger closes the loop (feeds real `N` + SOTA back to the
-  guardrail); and the `quant-rd-loop` skill wires one full iteration. Tests: `agent_loop/tests/`
-  (10 passing: 6 guardrail + 4 trace).
+  guardrail); the `quant-rd-loop` skill wires one full iteration; and `agent_loop/knowledge/` is a
+  qlib capability substrate extracted from the installed qlib. Tests: `agent_loop/tests/`
+  (13 passing: 6 guardrail + 4 trace + 3 knowledge).
 - `agent_loop/` is a **new top-level package kept outside `rdagent/`** so upstream merges stay cheap
   (0001 §10). Do not put loop-driving logic inside `rdagent/`.
 
@@ -71,7 +72,7 @@ becomes the goal, 0001's program-driven path is the fallback (point LiteLLM at C
 4. ~~Claude Code skill `quant-rd-loop`~~ — **DONE** (`agent_loop/skills/quant-rd-loop/SKILL.md`). See §5e.
 
 **Now open:** run real loop iterations at scale via the skill (accumulate a trace, watch DSR/overfitting
-drift), and Phase F (curated qlib knowledge substrate the agent reads when proposing).
+drift), and the leakage-safe evaluation upgrade (0001 §7 v1: purged/embargoed CV, embargo ≥ 2 days).
 
 ---
 
@@ -233,6 +234,30 @@ mkdir -p .claude/skills/quant-rd-loop && cp agent_loop/skills/quant-rd-loop/SKIL
 The skill's judge step calls `guardrail --candidate … --holdout … --trace $LEDGER` with **no** `--sota`:
 the ledger alone supplies `N`, the SOTA holdout, and the SOTA net IR (verified end-to-end via CLI).
 
+## 5f. The qlib knowledge substrate (built — Phase F)
+
+`agent_loop/knowledge/` — a curated, retrievable corpus the agent reads **directly** when proposing
+(no embeddings/RAG; that dissolved in §6). It is **extracted from the installed qlib**, not hand-written
+— otherwise it would hallucinate the very corpus meant to stop hallucination. `knowledge/build.py`
+(run in the `qlib` env) regenerates it:
+
+| file | contents | source |
+|---|---|---|
+| `operators.md` | 45 expression operators + signatures, by category | extracted from `qlib.data.ops` |
+| `fields.md` | the 7 real `$` fields + label convention + **absent-field caveat** | extracted from the dataset |
+| `handlers.md` | Alpha158 (158) + Alpha360 (360) catalogs | extracted from `qlib.contrib.data.loader` |
+| `metrics.md` / `models.md` | metric glossary + model cards | curated from templates/run output |
+
+**The extractor earns its keep immediately.** Its self-consistency check (every operator/field the
+handlers use must be documented) surfaced that the stock Alpha158/360 handlers reference **`$vwap`,
+which this cn_data dataset does not contain** — features using it silently become NaN. That is now a
+prominent "DO NOT USE" caveat in `fields.md`, not a landmine. Operators are hard-asserted grounded (an
+undocumented operator = extractor bug); absent fields are documented as caveats.
+
+The `quant-rd-loop` skill's propose step now instructs the agent to read this substrate first and author
+expressions only from documented operators/fields. Tests (`agent_loop/tests/test_knowledge.py`): the
+substrate is present and the real base features (`ALPHA20`) are fully grounded in it.
+
 ## 6. What dissolves vs 0001
 
 - **Embeddings / RAG (0001 §8, §10 open item): gone.** RAG existed to feed a *remote* LLM past
@@ -269,8 +294,11 @@ module. The two paths **share** the guardrail and the knowledge substrate, so th
   (propose → qlib expressions → run on selection + locked holdout → guardrail). See §5c.
 - **Phase E — skill (DONE).** `quant-rd-loop` Claude Code skill = the one-iteration recipe over A–D
   (propose → run selection+holdout → guardrail(trace) → record → report). See §5e.
-- **Phase F — knowledge substrate** (0001 §Gap 2 / Phase 3): curated qlib operator/handler/model-card
-  corpus the agent reads directly. Later: purged/embargoed CV (0001 §7 v1).
+- **Phase F — knowledge substrate (DONE).** qlib operator/field/handler/model-card corpus **extracted
+  from the installed qlib** (`agent_loop/knowledge/`), read directly by the agent when proposing; the
+  extractor's self-consistency check surfaced the `$vwap`-absent caveat. See §5f.
+- **Next: leakage-safe evaluation (0001 §7 v1).** Purged/embargoed CV (embargo ≥ 2 days for the 2-day
+  label) in the qlib templates + guardrail — the remaining scientific upgrade.
 
 ---
 
