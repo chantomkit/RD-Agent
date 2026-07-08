@@ -110,6 +110,12 @@ def setup_panel(rep: R.Report):
     st.caption(line)
 
 
+def strategy_panel(rep: R.Report):
+    with st.expander("🛈 How the strategy works (model, entry & exit)", expanded=True):
+        for head, body in R.strategy_explainer(rep):
+            st.markdown(f"**{head}.**  {body}")
+
+
 def gate_panel(rep: R.Report):
     st.subheader("Gate decision")
     if not rep.gates:
@@ -258,6 +264,7 @@ def loop_view(rep: R.Report):
     st.divider()
 
     setup_panel(rep)
+    strategy_panel(rep)
     st.divider()
     gate_panel(rep)
     st.divider()

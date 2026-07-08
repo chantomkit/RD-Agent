@@ -249,6 +249,7 @@ def _parse_conf(text: str | None) -> dict[str, Any]:
     if not text:
         return {}
     model_m = re.search(r"class:\s*(\w*Model)\b", text)
+    label_m = re.search(r'label:\s*\n\s*-\s*\[\s*"([^"]+)"', text)
     out = {
         "market": _conf_val(text, "market"),
         "benchmark": _conf_val(text, "benchmark"),
@@ -262,6 +263,7 @@ def _parse_conf(text: str | None) -> dict[str, Any]:
         "handler": "Alpha360" if "Alpha360" in text else ("Alpha158" if "Alpha158" in text else None),
         "model": ("LightGBM (LGBModel)" if "LGBModel" in text else (model_m.group(1) if model_m else None)),
         "strategy": "TopkDropout" if "TopkDropout" in text else None,
+        "label": label_m.group(1) if label_m else None,
     }
     return {k: v for k, v in out.items() if v is not None}
 
@@ -305,6 +307,67 @@ def backtest_setup(rep: "Report") -> dict[str, Any]:
             "holdout_test": _seg_str(rep.holdout_segment, "test"),
         },
     }
+
+
+def _int(v: Any, default: int | None = None) -> int | None:
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return default
+
+
+def _label_description(expr: str | None) -> str:
+    if not expr:
+        return "each stock's next-period forward return"
+    if expr.replace(" ", "") == "Ref($close,-2)/Ref($close,-1)-1":
+        return ("each stock's **next-day forward return** (close-to-close, offset by one day so the trade "
+                "is actually executable — the model never sees same-day information)")
+    return f"a forward return defined by `{expr}`"
+
+
+def strategy_explainer(rep: "Report") -> list[tuple[str, str]]:
+    """A plain-English, per-report walk-through of the strategy mechanism — what the model predicts and
+    exactly how positions are entered and exited — generated from the run's qlib config so it is always
+    present and consistent (the agent's `report.md` carries the *specific* rationale on top of this)."""
+    cfg = backtest_setup(rep)["config"]
+    feats = backtest_setup(rep)["features"]
+    topk, n_drop = _int(cfg.get("topk")), _int(cfg.get("n_drop"))
+    hold = cfg.get("hold_thresh", "1")
+    model = cfg.get("model", "a gradient-boosted tree model")
+    handler = cfg.get("handler", "the factor")
+    market = cfg.get("market", "the universe")
+    bench = cfg.get("benchmark_name") or cfg.get("benchmark") or "the benchmark index"
+    label_desc = _label_description(cfg.get("label"))
+    feat_clause = (f"{len(feats)} factor features (the {handler} base set plus this loop's added factors)"
+                   if feats else f"the {handler} factor set")
+    turnover = f"about {n_drop}/{topk} ≈ {round(100 * n_drop / topk)}%" if (topk and n_drop) else "a small fraction"
+
+    return [
+        ("What the model predicts",
+         f"A **{model}** is trained on the *train* window to predict {label_desc}, from {feat_clause}. "
+         "Feature values are cross-sectionally normalized (outliers clipped) first. On every trading day "
+         "of the test window the model scores every stock — a higher score means it is predicted to "
+         "outperform its peers."),
+        ("Entry — how positions are opened",
+         f"Each day all **{market}** stocks are ranked by that score. The book targets the **top {topk}** "
+         f"names, roughly equal-weighted (~{round(100 / topk)}% each if topk={topk}). A stock is "
+         "**bought (▲ on the price charts)** when it climbs into the top ranks and a slot is available."),
+        ("Exit — how positions are closed",
+         f"This is a **Top-{topk} Dropout** rule: each day the **{n_drop} worst-scored names you currently "
+         f"hold** are **sold (▼)** and replaced by the highest-scored names you don't yet hold (a name must "
+         f"be held ≥ {hold} day(s) before it can be dropped). So a position exits when its rank *falls* far "
+         "enough to be among the daily drops — there is **no fixed price target or stop-loss**. This caps "
+         f"turnover at {turnover} of the book per day."),
+        ("Execution & cost",
+         f"Orders fill at the **{cfg.get('deal_price', 'close')} price**, with **{cfg.get('open_cost', '?')}** "
+         f"buy / **{cfg.get('close_cost', '?')}** sell cost per side."),
+        ("How it is scored",
+         f"Results are reported as **excess return over {bench}**. Because a long-only top-k book is always "
+         "net-long the market, a dollar-neutral **long-short Sharpe** (long the top names, short the bottom) "
+         "is also computed to separate genuine stock-selection skill from simply riding market beta."),
+        ("This iteration's idea",
+         rep.hypothesis or "(no hypothesis recorded for this loop)"),
+    ]
 
 
 def load_all(ledger_path: str | Path) -> list[Report]:

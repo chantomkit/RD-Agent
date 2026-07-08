@@ -66,6 +66,8 @@ _CONF = """
     region: us
 market: &market universe
 benchmark: &benchmark SPX
+                        label:
+                            - ["Ref($close, -2)/Ref($close, -1) - 1"]
                 - class: qlib.contrib.data.loader.Alpha158DL
             class: TopkDropoutStrategy
             topk: {{ topk | default(30, true) }}
@@ -266,6 +268,25 @@ def test_backtest_setup_config_segments_and_override(tmp_path: Path):
     assert cfg["topk"] == 25             # explicit run setting overrides the config default (30)
     assert su["segments"]["train"] and su["segments"]["selection_test"] and su["segments"]["holdout_test"]
     assert su["features"] is None        # no features.json written in this fixture
+
+
+def test_strategy_explainer_describes_mechanism(tmp_path: Path):
+    ledger = tmp_path / "trace_us.json"
+    _make_loop(tmp_path, ledger, 0, promote=False)
+    secs = R.strategy_explainer(R.load_report(ledger, 0))
+    heads = [h for h, _ in secs]
+    assert any("Entry" in h for h in heads) and any("Exit" in h for h in heads)
+    blob = " ".join(b for _, b in secs)
+    assert "top 25" in blob                       # topk override (25) flows into the prose
+    assert "sold" in blob and "bought" in blob     # entry/exit described
+    assert "next-day forward return" in blob       # label decoded to plain English
+    assert secs[-1][1] == "hyp 0"                  # this iteration's hypothesis is included
+
+
+def test_label_description():
+    assert "next-day forward return" in R._label_description("Ref($close, -2)/Ref($close, -1) - 1")
+    assert "next-period forward return" in R._label_description(None)
+    assert "`$close/Ref($close,5)`" in R._label_description("$close/Ref($close,5)")
 
 
 def test_segment_returns_excess_identity(tmp_path: Path):

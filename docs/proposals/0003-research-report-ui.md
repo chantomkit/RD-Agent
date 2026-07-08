@@ -56,7 +56,7 @@ pandas *inside the container* by the existing post-run step.
   against a real workspace (7530 position rows / 219 names, weights ≈ 1/30 for topk=30; 54854 price rows)
   and then rendering NVDA's price with 5 entry / 5 exit marks **on the host with no qlib**.
 - **Lineage** is in `trace.py` (`record(..., parent=, title=, report=, run_dir=)`), backward-compatible.
-- Tests: `agent_loop/tests/test_report.py` (14) + a lineage test in `test_trace.py`. Full suite **32
+- Tests: `agent_loop/tests/test_report.py` (16) + a lineage test in `test_trace.py`. Full suite **34
   passing**.
 
 **Environment facts (this machine, verified):** streamlit 1.59 + plotly 6.8 + pyarrow 24 are in the
@@ -131,6 +131,15 @@ the run JSON `settings`) taking precedence. The Tier-2 price+entry/exit plot is 
 Selection and Holdout tabs each show their own run's trades over their own window (extraction runs on
 every backtest, so both are populated going forward).
 
+**"How the strategy works" explainer (from review):** because a one-line hypothesis
+("add MOM12_1 + VOL60 to Alpha20") doesn't convey the *mechanism*, each report also carries a generated
+plain-English walk-through (`report.strategy_explainer`): what the model predicts (the label decoded from
+the config — e.g. next-day close-to-close forward return, offset to avoid look-ahead), how positions are
+**entered** (rank by score, hold the top-k) and **exited** (Top-k Dropout: sell the `n_drop` worst-held
+each day, no stop-loss), the resulting turnover, execution/cost, and how it's scored vs. the benchmark.
+It ties the ▲/▼ marks on the price charts to the actual entry/exit rule. Generated from the config so it
+is always present and consistent; the agent's `report.md` adds the *specific* rationale on top.
+
 **Tier 2 — real positions + price** (`positions_normal_1day.pkl` holds qlib `Position` objects → cannot
 unpickle on the host; the binary price data also needs qlib). Resolved by extracting **where qlib already
 lives**: the in-container post-run step (`read_exp_res.py`, the same one that emits `ret.pkl`) now also
@@ -146,7 +155,7 @@ gracefully there (no `positions.parquet` → those panels are skipped) while Tie
 
 ## 6. Verification
 
-- **Unit** (`~/anaconda3/envs/rdagent/bin/python -m pytest agent_loop/tests/ -q`): 32 passing. The report
+- **Unit** (`~/anaconda3/envs/rdagent/bin/python -m pytest agent_loop/tests/ -q`): 34 passing. The report
   tests fabricate a ledger + workspace artifacts in `tmp_path` and exercise assembly, graceful
   degradation, the IC/quantile builders (IC positive for an injected-correlation signal), and the Tier-2
   entry/exit interval logic.
