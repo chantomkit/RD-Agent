@@ -100,6 +100,10 @@ def record(
     decision: str | None = None,
     hypothesis: str = "",
     action: str = "factor",
+    parent: int | None = None,
+    title: str | None = None,
+    report: str | None = None,
+    run_dir: str | None = None,
     path: str = DEFAULT_PATH,
 ) -> dict[str, Any]:
     """Append a trial to the ledger.
@@ -107,6 +111,11 @@ def record(
     candidate/holdout: run_qlib JSON for the selection and locked-holdout segments.
     decision: the guardrail's output JSON (for the promote/reject verdict + DSR/gate stats). If omitted,
               the trial is recorded as not-promoted with no guardrail stats.
+    parent: the loop this trial branched from (lineage; ADR 0003). None for a fresh line of inquiry.
+    title: short human title for the report UI (defaults to the hypothesis in the UI when absent).
+    report: path to the agent-authored report.md narrative for this loop.
+    run_dir: path to the loop's run directory (sel/hold/decision JSON); the report UI falls back to a
+             convention when absent, so this is optional.
     """
     cand = _load(candidate)
     hold = _load(holdout)
@@ -133,6 +142,11 @@ def record(
         "candidate_workspace": cand.get("workspace"),
         "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     }
+    # Optional lineage / report-UI fields (ADR 0003). Only stored when provided, keeping the schema
+    # backward-compatible with pre-0003 ledgers.
+    for key, val in {"parent_loop": parent, "title": title, "report_path": report, "run_dir": run_dir}.items():
+        if val is not None:
+            trial[key] = val
     ledger["trials"].append(trial)
     if promoted:
         ledger["sota_loop"] = loop
@@ -179,6 +193,14 @@ def show(path: str = DEFAULT_PATH) -> dict[str, Any]:
         avg = sum(gaps) / len(gaps)
         print(f"\nmean selection-vs-holdout Rank IC gap: {avg:+.4f} "
               f"({'watch for overfitting drift' if avg > 0.01 else 'ok'})")
+
+    # Lineage (ADR 0003): which loops were branched from which.
+    branches = [t for t in trials if t.get("parent_loop") is not None]
+    if branches:
+        print("\nlineage:")
+        for t in branches:
+            print(f"  loop {t['loop']} branched from loop {t['parent_loop']}"
+                  + (f"  — {t['title']}" if t.get("title") else ""))
 
     # SOTA floor = the trivial-baseline panel; a strategy is SOTA only if it beats it.
     base = ledger.get("baselines")

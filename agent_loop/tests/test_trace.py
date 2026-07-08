@@ -111,6 +111,31 @@ def test_show_runs(tmp_path: Path, capsys):
     assert "sota_loop" in out and "hy" in out
 
 
+def test_record_lineage_fields(tmp_path: Path, capsys):
+    """ADR 0003: record() stores parent_loop/title/report_path/run_dir only when provided, and show()
+    surfaces lineage."""
+    path = str(tmp_path / "trace.json")
+    # loop 0 — no lineage
+    trace.record(candidate=_make_run(tmp_path, "s0", 1.5, 0.03), holdout=_make_run(tmp_path, "h0", 1.0, 0.03),
+                 decision=_decision(False), hypothesis="seed", path=path)
+    # loop 1 — branched from loop 0, with a report + run dir
+    rdir = tmp_path / "runs" / "loop_1"
+    rdir.mkdir(parents=True)
+    (rdir / "report.md").write_text("# branch")
+    trace.record(candidate=_make_run(tmp_path, "s1", 1.6, 0.03), holdout=_make_run(tmp_path, "h1", 1.1, 0.03),
+                 decision=_decision(False), hypothesis="refine", parent=0, title="lower turnover",
+                 report=str(rdir / "report.md"), run_dir=str(rdir), path=path)
+    led = json.loads(Path(path).read_text())
+    t0, t1 = led["trials"]
+    assert "parent_loop" not in t0  # loop 0 has no lineage keys
+    assert t1["parent_loop"] == 0 and t1["title"] == "lower turnover"
+    assert t1["report_path"].endswith("loop_1/report.md") and t1["run_dir"].endswith("loop_1")
+
+    trace.show(path)
+    out = capsys.readouterr().out
+    assert "lineage:" in out and "loop 1 branched from loop 0" in out
+
+
 if __name__ == "__main__":
     import tempfile
 

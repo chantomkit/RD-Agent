@@ -1,6 +1,6 @@
 ---
 name: quant-rd-loop
-description: Run one iteration of the agent-driven quant R&D loop in this repo — propose a factor/model hypothesis, run selection + LOCKED-holdout qlib backtests, judge with the deterministic guardrail (holdout + Deflated Sharpe + cost), and record to the trace ledger. Use when asked to "run the quant loop", "propose and test a factor/alpha", "do a loop iteration", "advance the alpha search", or to continue the ADR-0002 agent-driven loop. No LLM API key is involved; you (the agent) are the brain.
+description: Run one iteration of the agent-driven quant R&D loop in this repo — propose a factor/model hypothesis, run selection + LOCKED-holdout qlib backtests, judge with the deterministic guardrail (holdout + Deflated Sharpe + cost), record to the trace ledger, and write a per-loop report the web UI renders. Use when asked to "run the quant loop", "propose and test a factor/alpha", "do a loop iteration", "advance the alpha search", "branch/continue from a report/loop", or to continue the ADR-0002 agent-driven loop. No LLM API key is involved; you (the agent) are the brain.
 ---
 
 # quant-rd-loop — one iteration of the agent-driven loop
@@ -111,15 +111,42 @@ the fair bar. PROMOTE requires ALL of: holdout beats SOTA, Deflated Sharpe ≥ t
 IR > 0, beats SOTA net, **and beats the trivial-baseline panel** (buy_hold / eqw_1n / momentum /
 random_p95) on the holdout.
 
-### 4. Record
+### 4. Write the report — the durable artifact, not an in-chat conclusion (ADR 0003)
+Do **not** conclude only in the conversation (it evaporates when the session ends). Author a per-loop
+**`$RUN/report.md`** — the narrative the web UI renders alongside the figures + gate decision:
+- the hypothesis and its rationale (why this factor/model should carry signal);
+- the **selection vs. locked-holdout** comparison, called out in words (Rank IC, net IR, L/S Sharpe, and
+  the sel−holdout gap — the overfitting fingerprint);
+- the guardrail **verdict and which gate decided it** (read `$RUN/decision.json` `reasons`);
+- what you'd try next (this seeds a future branch).
+
+Keep it markdown; the numbers/figures come from the JSON + workspace automatically, so focus on judgment.
+
+### 5. Record (with report + lineage)
 ```bash
 $PY -c "from agent_loop import trace; trace.record(candidate='$RUN/sel.json', holdout='$RUN/hold.json', \
-    decision='$RUN/decision.json', hypothesis='<your hypothesis>', action='<factor|model>', path='$LEDGER')"
+    decision='$RUN/decision.json', hypothesis='<your hypothesis>', action='<factor|model>', \
+    title='<short UI title>', report='$RUN/report.md', run_dir='$RUN', path='$LEDGER')"
+# when branching from a chosen historic loop, also pass parent=<loop id> (see 'Branch' below)
 ```
 
-### 5. Report
-Summarize to the user: the hypothesis, selection vs holdout metrics, the guardrail verdict and *why*
-(which gate decided), and the updated `trace show`. If PROMOTED, it is the new SOTA to beat next loop.
+### 6. Surface it (point at the report UI; don't re-paste everything)
+Tell the user the one-line verdict and the **report id** (`<project>/<loop>`, e.g. `us/2`), and how to
+open it. The UI is a read-only viewer over the ledger — no Docker, no `.env`:
+```bash
+$PY -m agent_loop.report_ui --port 19900     # then open http://127.0.0.1:19900
+```
+It shows the gate decision, the selection-vs-holdout table, the backtest figures (cumulative return, IC
+time series, signal-quantile, long-short spread, and — for US runs — per-ticker price with entry/exit
+marks), the discussion you wrote, and a copy-paste **branch** command.
+
+## Branch — fine-tune from a chosen historic loop (ADR 0003)
+When the user says "branch from `us/1`" / "continue from loop N" / "refine that report":
+1. Read that loop's context: `trace show` and its `runs[_us]/loop_N/report.md` (its hypothesis, params,
+   and "what to try next"). **Do not read holdout metrics to pick the new factor** — the invariant holds.
+2. Propose the refinement (steps 1–3) seeded from that loop's idea.
+3. On record, set **`parent=N`** so the ledger tracks lineage (`trace show` prints "loop M branched from
+   loop N"; the UI shows "branched from loop N").
 
 ## Rules of thumb
 - One hypothesis per iteration; keep factors distinct and motivated.
